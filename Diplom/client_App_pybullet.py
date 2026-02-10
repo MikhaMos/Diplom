@@ -53,7 +53,8 @@ class PyBulletClient(QObject):
                 if data.get('type') == 'positions':
                     positions = {
                         'JointPositions':data.get('JointPositions',), 
-                        'FramePositions':data.get('FramePositions')
+                        'FramePositions':data.get('FramePositions'),
+                        'End_effector_Orientation':data.get('End_effector_Orientation'),
                         }
                     self.positions_received.emit(positions)
         except Exception as e:

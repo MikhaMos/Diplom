@@ -1,8 +1,11 @@
 import sys
 import os
 from PySide6 import QtUiTools
-from PySide6.QtWidgets import QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLabel, QTextEdit, QMessageBox, QButtonGroup
-from PySide6.QtCore import Qt, QTimer, Signal, QObject, Slot
+from PySide6.QtWidgets import (QApplication, QCheckBox, QGroupBox, QHBoxLayout,
+    QLabel, QMainWindow, QMenuBar, QPushButton,
+    QRadioButton, QSizePolicy, QStackedWidget, QStatusBar,
+    QTextEdit, QVBoxLayout, QWidget, QMessageBox, QButtonGroup)
+from PySide6.QtCore import Qt, QTimer, Signal, QObject, Slot, QThread
 import json
 import asyncio
 import threading
@@ -26,8 +29,7 @@ class MainWindow(QMainWindow):
         loader = QtUiTools.QUiLoader()
         self.ui =loader.load(ui_file)
         self.setCentralWidget(self.ui)
-        
-        
+
         # инициализация компонентов
         self.robot_client = PyBulletClient()
         self.adaptation = adaptation.AdaptationManager()
@@ -44,12 +46,19 @@ class MainWindow(QMainWindow):
         self.ml_client.predictions_received.connect(self.on_ml_prediction)
         self.ml_client.error_occurred.connect(self.on_ml_error)
 
-        self.adaptation.apply_simple_style(self.ui)
+        #self.adaptation.apply_simple_style(self.ui) #Стиль по умолчанию
         # Состояния
         self.adaptive_mode = False
         self.survey_answered = False
         self.current_fatigue_level = 0
         self.current_frame_pos_robot = []
+        self.current_orientation_robot = []
+
+        # переменные для автоматики
+        self.automatic_mode_active = False
+        self.automatic_thread = None
+        self.points_robot=[]
+        self.orientation_robot=[]
 
         # настройка интерфейса
         self.setup_ui()
@@ -89,11 +98,14 @@ class MainWindow(QMainWindow):
         # Настройка опроса
         self.setup_survey()
 
+        #Настройка кнопки автоматического режима (CheckBox)
+        self.ui.AutomaticModeButton.stateChanged.connect(self.on_automatic_mode_toggled)
+
          # Настройка других кнопок (пока без функционала)
         self.ui.HomeButton.clicked.connect(self.go_home)
-        self.ui.PointButton.clicked.connect(self.save_positions)
+        self.ui.SavePointButton.clicked.connect(self.save_positions)
         self.ui.pushButton_23.clicked.connect(lambda: self.log_message("Кнопка 2 нажата"))
-        self.ui.pushButton_24.clicked.connect(lambda: self.log_message("Кнопка 3 нажата"))
+        self.ui.ClearProgramButtons.clicked.connect(self.clear_points)
 
         # Настройка вывода
         self.ui.Output.setReadOnly(True)
@@ -205,13 +217,34 @@ class MainWindow(QMainWindow):
     def save_positions(self):
         if hasattr(self, 'robot_client') and self.robot_client.running:
            self.ui.Code.append(f"Save position {["%.2f" % framepos for framepos in self.current_frame_pos_robot]}")
+           self.points_robot.append(self.current_frame_pos_robot)
+           self.orientation_robot.append(self.current_orientation_robot)
         
         self.db.log_command(
             source='main_app',
             command='Save_positions',
-            parameters=f"positions={self.current_frame_pos_robot}",
+            parameters=f"positions={self.current_frame_pos_robot, self.current_orientation_robot}",
             success=True
         )
+    
+    @Slot(int)
+    def on_automatic_mode_toggled(self, state):
+        if self.ui.AutomaticModeButton.isChecked():
+            self.start_automatic_mode()
+            self.db.log_command(
+                source='main_app',
+                command='start_automatic_mode',
+                parameters="",
+                success=True
+            )
+        else:
+            self.stop_automatic_mode()
+            self.db.log_command(
+                source='main_app',
+                command='stop_automatic_mode',
+                parameters="",
+                success=True
+            )
 
     @Slot()
     def submit_survey(self):
@@ -281,11 +314,64 @@ class MainWindow(QMainWindow):
     def on_robot_positions(self,positions):
         # Обновляем позиции робота
         self.current_frame_pos_robot=positions.get('FramePositions')
+        self.current_orientation_robot=positions.get('End_effector_Orientation')
         text=""
         for i, pos in enumerate(positions.get('JointPositions')):
             text += f"Joint {i}: {pos:.2f}\n"
         text += f"Frame Position: {["%.2f" % framepos for framepos in self.current_frame_pos_robot]}"
         self.ui.OutputPos.setPlainText(text)
+
+    @Slot()
+    def start_automatic_mode(self):
+        if not self.points_robot:
+            QMessageBox.warning(
+                self,
+                "Error",
+                "Please save positions first"
+            )
+            self.ui.AutomaticModeButton.setChecked(False)
+            return
+
+        if hasattr(self, 'robot_client') and self.robot_client.running:
+            self.robot_client.send_command(
+                command = 'start_automatic_mode',
+                points = self.points_robot,
+                orientations = self.orientation_robot,
+                loop_programming = True
+                )
+            self.ui.Code.clear()
+            for i,points in enumerate(self.points_robot): 
+                self.ui.Code.append(f"Point {i}: {points}\n")
+            self.automatic_mode_active = True
+            self.log_message("Automatic mode started")
+            self.set_manual_controls_enabled(False)
+    
+    @Slot()
+    def stop_automatic_mode(self):
+        if hasattr(self, 'robot_client') and self.robot_client.running:
+            self.robot_client.send_command(command='stop_automatic_mode')
+            self.automatic_mode_active = False
+            self.log_message("Automatic mode stopped")
+            self.set_manual_controls_enabled(True)
+    
+    def set_manual_controls_enabled(self, enabled):
+        for buttons, _, _ in self.joint_buttons:
+            buttons.setEnabled(enabled)
+        self.ui.HomeButton.setEnabled(enabled)
+        self.ui.SavePointButton.setEnabled(enabled)
+
+    @Slot()
+    def clear_points(self):
+        self.points_robot = []
+        self.db.log_command(
+            source='main_app',
+            command='clear_points',
+            parameters="",
+            success=True
+        )
+        self.log_message("Points cleared")
+        self.ui.Code.clear()
+        self.ui.Code.append("Points cleared")
 
     def on_robot_error(self, error):
         self.log_message(f"Robot error: {error}")

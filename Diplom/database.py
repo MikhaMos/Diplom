@@ -167,6 +167,17 @@ class Database:
         # Логирует команды межды компонентами
         cursor = self.connection.cursor()
 
+        cursor.execute("SELECT COUNT(*) FROM command_log")
+        count_log = cursor.fetchone()[0]
+        if count_log > 300:
+            cursor.execute("""DELETE FROM command_log 
+            WHERE id IN( 
+                SELECT id FROM command_log
+                ORDER BY timestamp ASC
+                LIMIT ?
+            ) 
+            """, (count_log - 299,))
+
         # Если parameters - это dict, преобразуем в строку
         if isinstance(parameters, dict):
             parameters = json.dumps(parameters)
