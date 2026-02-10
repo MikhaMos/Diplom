@@ -39,6 +39,7 @@ class PybulletServer:
                     'type': 'positions',
                     'JointPositions': positions.get('JointPositions'),
                     'FramePositions': positions.get('FramePositions'),
+                    'End_effector_Orientation': positions.get('End_effector_Orientation'),
                     'timestamp': time.time(),
                     'adaptive_mode': self.adaptive_mode,
                     'speed_factor': self.speed_factor
@@ -86,6 +87,7 @@ class PybulletServer:
                 json.dumps(data), 
                 True
             )
+            response=None
             
             if command == 'move_joint':
                 joint = data.get('joint')
@@ -114,12 +116,34 @@ class PybulletServer:
                     'message': 'Positions have been reset',
                     'timestamp': time.time()
                 }
-                
+            
+            elif command == 'start_automatic_mode':
+                points = data.get('points')
+                loop = data.get('loop_programming', False)
+                orientations = data.get('orientations', None)
+                success,log_msg = self.robot.start_automatic_mode(points, orientations, loop)
+                response={
+                    'type': 'command_response',
+                    'command':'start_automatic',
+                    'success': success,
+                    'message': log_msg,
+                    'point_count': len(points),
+                    'timestamp': time.time()
+                }
+            
+            elif command == 'stop_automatic_mode':
+                success,log_msg = self.robot.stop_automatic_mode()
+                response={
+                    'type': 'command_response',
+                    'command':'stop_automatic',
+                    'success': success,
+                    'message': log_msg,
+                    'timestamp': time.time()
+                }
                 
             elif command == 'set_adaptive_mode':
                 self.adaptive_mode = data.get('enabled', False)
                 self.speed_factor = data.get('speed_factor', 0.6)
-
                 response={
                     'type': 'command_response',
                     'command':'set_adaptive_mode',

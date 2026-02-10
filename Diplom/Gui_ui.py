@@ -15,10 +15,10 @@ from PySide6.QtGui import (QBrush, QColor, QConicalGradient, QCursor,
     QFont, QFontDatabase, QGradient, QIcon,
     QImage, QKeySequence, QLinearGradient, QPainter,
     QPalette, QPixmap, QRadialGradient, QTransform)
-from PySide6.QtWidgets import (QApplication, QGroupBox, QHBoxLayout, QLabel,
-    QMainWindow, QMenuBar, QPushButton, QRadioButton,
-    QSizePolicy, QStackedWidget, QStatusBar, QTextEdit,
-    QVBoxLayout, QWidget)
+from PySide6.QtWidgets import (QApplication, QCheckBox, QGroupBox, QHBoxLayout,
+    QLabel, QMainWindow, QMenuBar, QPushButton,
+    QRadioButton, QSizePolicy, QStackedWidget, QStatusBar,
+    QTextEdit, QVBoxLayout, QWidget)
 
 class Ui_MainWindow(object):
     def setupUi(self, MainWindow):
@@ -184,12 +184,12 @@ class Ui_MainWindow(object):
 
         self.horizontalLayout.addWidget(self.HomeButton)
 
-        self.PointButton = QPushButton(self.horizontalLayoutWidget)
-        self.PointButton.setObjectName(u"PointButton")
-        sizePolicy1.setHeightForWidth(self.PointButton.sizePolicy().hasHeightForWidth())
-        self.PointButton.setSizePolicy(sizePolicy1)
+        self.SavePointButton = QPushButton(self.horizontalLayoutWidget)
+        self.SavePointButton.setObjectName(u"SavePointButton")
+        sizePolicy1.setHeightForWidth(self.SavePointButton.sizePolicy().hasHeightForWidth())
+        self.SavePointButton.setSizePolicy(sizePolicy1)
 
-        self.horizontalLayout.addWidget(self.PointButton)
+        self.horizontalLayout.addWidget(self.SavePointButton)
 
         self.pushButton_23 = QPushButton(self.horizontalLayoutWidget)
         self.pushButton_23.setObjectName(u"pushButton_23")
@@ -198,12 +198,12 @@ class Ui_MainWindow(object):
 
         self.horizontalLayout.addWidget(self.pushButton_23)
 
-        self.pushButton_24 = QPushButton(self.horizontalLayoutWidget)
-        self.pushButton_24.setObjectName(u"pushButton_24")
-        sizePolicy1.setHeightForWidth(self.pushButton_24.sizePolicy().hasHeightForWidth())
-        self.pushButton_24.setSizePolicy(sizePolicy1)
+        self.ClearProgramButtons = QPushButton(self.horizontalLayoutWidget)
+        self.ClearProgramButtons.setObjectName(u"ClearProgramButtons")
+        sizePolicy1.setHeightForWidth(self.ClearProgramButtons.sizePolicy().hasHeightForWidth())
+        self.ClearProgramButtons.setSizePolicy(sizePolicy1)
 
-        self.horizontalLayout.addWidget(self.pushButton_24)
+        self.horizontalLayout.addWidget(self.ClearProgramButtons)
 
         self.stackedWidget.addWidget(self.ControlPage)
         self.SurvayPage = QWidget()
@@ -463,6 +463,10 @@ class Ui_MainWindow(object):
 
         self.horizontalLayout_2.addWidget(self.pushButton_8)
 
+        self.AutomaticModeButton = QCheckBox(self.centralwidget)
+        self.AutomaticModeButton.setObjectName(u"AutomaticModeButton")
+        self.AutomaticModeButton.setGeometry(QRect(610, 0, 61, 21))
+        self.AutomaticModeButton.setTristate(False)
         MainWindow.setCentralWidget(self.centralwidget)
         self.menubar = QMenuBar(MainWindow)
         self.menubar.setObjectName(u"menubar")
@@ -503,9 +507,9 @@ class Ui_MainWindow(object):
 "<p style=\"-qt-paragraph-type:empty; margin-top:0px; margin-bottom:0px; margin-left:0px; margin-right:0px; -qt-block-indent:0; text-indent:0px;\"><br /></p></body></html>", None))
         self.ParametrsButtons.setTitle("")
         self.HomeButton.setText(QCoreApplication.translate("MainWindow", u"Home", None))
-        self.PointButton.setText(QCoreApplication.translate("MainWindow", u"Point", None))
+        self.SavePointButton.setText(QCoreApplication.translate("MainWindow", u"SavePoint", None))
         self.pushButton_23.setText("")
-        self.pushButton_24.setText("")
+        self.ClearProgramButtons.setText(QCoreApplication.translate("MainWindow", u"ClearProgram", None))
         self.StatusSurvey.setTitle("")
         self.label_8.setText(QCoreApplication.translate("MainWindow", u"TextLabel", None))
         self.label_9.setText(QCoreApplication.translate("MainWindow", u"TextLabel", None))
@@ -543,5 +547,6 @@ class Ui_MainWindow(object):
         self.pushButton_6.setText(QCoreApplication.translate("MainWindow", u"PushButton", None))
         self.pushButton_7.setText(QCoreApplication.translate("MainWindow", u"PushButton", None))
         self.pushButton_8.setText(QCoreApplication.translate("MainWindow", u"PushButton", None))
+        self.AutomaticModeButton.setText(QCoreApplication.translate("MainWindow", u"\u0410\u0432\u0442\u043e", None))
     # retranslateUi
 

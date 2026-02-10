@@ -319,7 +319,7 @@ p, li { white-space: pre-wrap; }
          </widget>
         </item>
         <item>
-         <widget class="QPushButton" name="PointButton">
+         <widget class="QPushButton" name="SavePointButton">
           <property name="sizePolicy">
            <sizepolicy hsizetype="Minimum" vsizetype="Minimum">
             <horstretch>0</horstretch>
@@ -327,7 +327,7 @@ p, li { white-space: pre-wrap; }
            </sizepolicy>
           </property>
           <property name="text">
-           <string>Point</string>
+           <string>SavePoint</string>
           </property>
          </widget>
         </item>
@@ -345,7 +345,7 @@ p, li { white-space: pre-wrap; }
          </widget>
         </item>
         <item>
-         <widget class="QPushButton" name="pushButton_24">
+         <widget class="QPushButton" name="ClearProgramButtons">
           <property name="sizePolicy">
            <sizepolicy hsizetype="Minimum" vsizetype="Minimum">
             <horstretch>0</horstretch>
@@ -353,7 +353,7 @@ p, li { white-space: pre-wrap; }
            </sizepolicy>
           </property>
           <property name="text">
-           <string/>
+           <string>ClearProgram</string>
           </property>
          </widget>
         </item>
@@ -948,6 +948,22 @@ p, li { white-space: pre-wrap; }
       </item>
      </layout>
     </widget>
+   </widget>
+   <widget class="QCheckBox" name="AutomaticModeButton">
+    <property name="geometry">
+     <rect>
+      <x>610</x>
+      <y>0</y>
+      <width>61</width>
+      <height>21</height>
+     </rect>
+    </property>
+    <property name="text">
+     <string>Авто</string>
+    </property>
+    <property name="tristate">
+     <bool>false</bool>
+    </property>
    </widget>
   </widget>
   <widget class="QMenuBar" name="menubar">

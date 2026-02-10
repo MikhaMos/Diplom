@@ -2,8 +2,9 @@ import pybullet as p
 import pybullet_data
 import time
 import json
+import math
 import numpy as np
-from threading import Thread
+from threading import Thread, Lock
 import logging
 
 logging.basicConfig(level=logging.INFO)
@@ -18,7 +19,25 @@ class KukaRobot:
         self.joint_limits = []
         self.current_positions = [0.0] * 6
         self.current_FramePos = [0.0]*3
+        self.current_orientation = [0.0, 0.0, 0.0, 1.0] # [x,y,z,w]
+        
+
         self.is_running=True
+
+        # Для обратной кинематики
+        self.ik_tolerance = 0.01 #допуск ошибки
+        self.max_ik_iterations = 100 #максимальное количество итераций
+        self.end_effector_link_index = 6
+
+        # Для автоматичекого редима
+        self.automatic_mode = False
+        self.automatic_thread = None
+        self.automatic_lock = Lock()
+        self.target_points = []
+        self.target_orientations = []
+        self.current_point_index = 0
+        self.loop_enabled = True
+        self.automatic_move_speed = 0.8
 
         # Ограничения рабочей зоны (x,y,z в)
         self.workspace_limits = {
@@ -111,6 +130,7 @@ class KukaRobot:
         self.joint_indices = self.joint_indices[:6]
         self.joint_limits = self.joint_limits[:6]
 
+
         logger.info(f"Robot initialized with {len(self.joint_indices)} joints")
         logger.info(f"Joint limits: {self.joint_limits}")
     
@@ -126,10 +146,13 @@ class KukaRobot:
         for i, joint_idx in enumerate(self.joint_indices):
             joint_state = p.getJointState(self.robot_id, joint_idx)
             self.current_positions[i] = joint_state[0]
-        self.current_FramePos = list(p.getLinkState(self.robot_id, self.joint_indices[5])[0])
+        self.end_effector_link_state = p.getLinkState(self.robot_id, self.end_effector_link_index)
+        self.current_FramePos = list(self.end_effector_link_state[0])
+        self.current_orientation = list(self.end_effector_link_state[1])
         
         
     
+
     def visualize_workspace(self):
         if self.workspace_visual:
             p.removeBody(self.workspace_visual)
@@ -180,11 +203,11 @@ class KukaRobot:
             if violation:
                logger.info(f"Workspace violation detected! Position: ({end_effector_pos[0]:.3f}, {end_effector_pos[1]:.3f}, {end_effector_pos[2]:.3f})")
     
+    # только для _check_workspace_violation (возможно поменять)
     def get_end_effector_position(self):
         if self.robot_id and len(self.joint_indices) > 0:
             end_effector_link = 6
             joint_state = p.getLinkState(self.robot_id, end_effector_link, computeForwardKinematics=True)
-            
             return joint_state[0]
         return None
     
@@ -208,12 +231,13 @@ class KukaRobot:
             )
             return True, f"Joint {joint_index} moved to {new_pos:.3f}"
         return False, f"Invalid joint index: {joint_index}"
-
+    
     def get_joint_positions(self):
         positions_deg = [pos * 180 / np.pi for pos in self.current_positions]
         return {
                 'JointPositions': positions_deg,
-                'FramePositions':self.current_FramePos
+                'FramePositions':self.current_FramePos,
+                'End_effector_Orientation':self.current_orientation
                 }
 
     def reset_positions(self):
@@ -227,11 +251,201 @@ class KukaRobot:
                 maxVelocity=0.5
             )
 
+    def calculate_inverse_kinematics(self, target_position, target_orientation): #target_orientation=None):
+        try:
+            
+            joint_positions = p.calculateInverseKinematics(
+                self.robot_id,
+                self.end_effector_link_index,
+                target_position,
+                targetOrientation=target_orientation,
+                lowerLimits=[lim[0] for lim in self.joint_limits],
+                upperLimits=[lim[1] for lim in self.joint_limits],
+                jointRanges=[lim[1] - lim[0] for lim in self.joint_limits],
+                restPoses = [0.0, -0.5, 0.0, 1.0, 0.0, 0.0],
+                maxNumIterations=self.max_ik_iterations,
+                residualThreshold=self.ik_tolerance
+            )
+
+            result = list(joint_positions[:len(self.joint_indices)])
+            for i, angle in enumerate(result):
+                lower,upper = self.joint_limits[i]
+                result[i] = max(lower, min(angle, upper))
+            
+            logger.info(f"Calculated joint positions successfully")
+            return result
+        except Exception as e:
+            logger.error(f"Error calculating inverse kinematics: {e}")
+            return None
+        
+    def move_to_point_ik(self, target_position,target_orientation):
+        try:
+
+            joint_angles = self.calculate_inverse_kinematics(target_position, target_orientation)
+            if joint_angles is None:
+                return False, "Failed to calculate inverse kinematics"
+
+            for i, joint_idx in enumerate(self.joint_indices):
+                p.setJointMotorControl2(
+                    self.robot_id,
+                    joint_idx,
+                    p.POSITION_CONTROL,
+                    targetPosition=joint_angles[i],
+                    force=500,
+                    maxVelocity=self.automatic_move_speed
+                )
+            
+            start_time = time.time()
+            timeout = 5.0
+        
+            while time.time() - start_time < timeout:
+                
+                current_state = p.getLinkState(self.robot_id, self.end_effector_link_index, computeForwardKinematics=True)
+                current_position = current_state[0]
+                current_orientation = current_state[1]
+                
+                position_distance = np.linalg.norm(np.array(current_position) - np.array(target_position))
+                """
+                orientation_ok = True
+                if target_orientation is not None:
+                    orientation_diff = self.quaternion_angle_diff(current_orientation, target_orientation)
+                    orientation_ok = orientation_diff < 0.2  # 0.1 радиан (~5.7 градусов)
+                else:
+                    orientation_ok = True
+                print("orientation_diff",orientation_diff)
+                print("position_distance",position_distance)
+                print("orientation_ok",orientation_ok)
+                """
+                if position_distance < 0.55: #and orientation_ok: # Допуск  см
+                    logger.info(f"Move to point IK completed in {time.time() - start_time:.3f} seconds")
+                    logger.debug(f"Point completed, distance: {position_distance:.3f}")
+                    return True, f"Point {target_position} completed"
+                    
+                time.sleep(2)
+                return False, f"Move to point IK timed out after {timeout} seconds"
+        
+        except Exception as e:
+            logger.error(f"Error moving to point with IK: {e}")
+            return False, str(e)
+    """
+    def quaternion_angle_diff(self, q1, q2):
+        # Вычисление угловой разницы медлу двумя квартерионами
+
+        # Нормализуем кватернионы
+        q1_norm=np.linalg.norm(q1)
+        q2_norm=np.linalg.norm(q2)
+        if q1_norm == 0 or q2_norm == 0:
+            return math.pi
+        
+        q1 = np.array(q1) / q1_norm
+        q2 = np.array(q2) / q2_norm
+
+        # Скалярное произведение квартерионов
+        dot = np.dot(q1, q2)
+
+         # Кватернионы q и -q представляют одну и ту же ориентацию!
+        # Берем абсолютное значение и ограничиваем
+        dot = abs(dot)
+        dot = abs(dot)
+        dot = min(1.0,max(-1.0,dot))
+
+        # Угол между ориентациями
+        angle = 2 * math.acos(dot)
+
+        # Кватернионы имеют двойное покрытие: q ≡ -q
+        # Поэтому минимальный угол всегда <= π/2
+        if angle > math.pi:
+            angle = 2 * math.pi - angle
+        
+        return angle
+    """
+
+    
+    def start_automatic_mode(self,points,orientation,loop_programming = True):
+        with self.automatic_lock:
+            if self.automatic_mode:
+                return False
+            
+            if not points:
+                return False, "No points provided"
+            
+            self.target_points = points
+            self.target_orientations = orientation
+            self.current_point_index = 0
+            self.loop_enabled = loop_programming
+            self.automatic_mode = True
+
+            #self.target_orientations = [self.current_orientation for _ in range(len(points))]
+            self.automatic_thread = Thread(target=self._automatic_mode_loop, daemon=True)
+            self.automatic_thread.start()
+
+            logger.info(f"Automatic mode started. Points: {len(self.target_points)}")
+            return True
+        
+    def stop_automatic_mode(self):
+        with self.automatic_lock:
+            if not self.automatic_mode:
+                return
+            self.automatic_mode = False
+            logger.info("Automatic mode stopped")
+    
+    def _automatic_mode_loop(self):
+        #Цикл автоматического управления
+        logger.info("Automatic mode loop started")
+        while self.automatic_mode and self.is_running:
+            try:
+                with self.automatic_lock:
+                    if not self.target_points or self.current_point_index >= len(self.target_points):
+
+                        if self.loop_enabled:
+                            self.current_point_index = 0
+                            logger.info("Looping to the first point")
+
+                        else:
+                            self.automatic_mode = False
+                            logger.info("Automatic mode stopped")
+                            break
+                    
+                    # получаем текущую точку
+                    target_point = self.target_points[self.current_point_index]
+                    target_orientation = self.target_orientations[self.current_point_index]
+
+                    # Преобразуем в массив
+                    if isinstance(target_point, list):
+                        target_point = np.array(target_point, dtype=np.float32)
+
+                    point_num = self.current_point_index + 1
+                    total_points = len(self.target_points)
+                    logger.info(f"Moving to point {point_num}/{total_points} ({target_point})")
+                    
+                    success, message = self.move_to_point_ik(target_point, target_orientation)
+                    if success:
+                        self.current_point_index += 1
+                        logger.info(f"Point {target_point} completed")
+                        time.sleep(0.5)
+                    else:
+                        logger.warning(f"Failed to move to point {target_point}: {message}")
+                        self.current_point_index += 1
+                        time.sleep(1)
+
+            except Exception as e:
+                logger.error(f"Error in automatic mode loop: {e}")
+
+    logger.info("Automatic mode loop stopped")
+        
     def disconnect(self):
         self.is_running = False
-        if self.sim_thread.is_alive():
+        # Останавливаем автоматический режим
+        self.stop_automatic_mode()
+
+        #Ждем завершения потоков
+        if hasattr(self, 'automatic_thread') and self.automatic_thread:
+            self.automatic_thread.join(timeout=1.0)
+
+        if hasattr(self, 'sim_thread') and self.sim_thread:
             self.sim_thread.join(timeout=1.0)
-        p.disconnect()
+        if self.physics_client is not None:
+            p.disconnect()
 
 if __name__ == "__main__":
     robot = KukaRobot(gui=True)
