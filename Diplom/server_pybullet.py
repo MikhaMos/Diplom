@@ -18,7 +18,6 @@ class PybulletServer:
         self.robot.connect()
         self.db = Database()
         self.adaptive_mode = False
-        self.speed_factor = 1.0
         self.clients = set()
 
     async def register(self,websocket):
@@ -42,13 +41,13 @@ class PybulletServer:
                     'End_effector_Orientation': positions.get('End_effector_Orientation'),
                     'timestamp': time.time(),
                     'adaptive_mode': self.adaptive_mode,
-                    'speed_factor': self.speed_factor
+                    'speed_factor': positions.get('velosity')
                 }
                 
 
                 self.db.save_telemetry(
-                    positions=positions,
-                    velocity=self.speed_factor,
+                    positions=f'joint_positions:{positions.get('JointPositions')}, frame_positions:{positions.get("FramePositions")}, end_effector_orientation:{positions.get("End_effector_Orientation")}',
+                    velocity=positions.get('velosity'),
                     adaptive_mode=self.adaptive_mode
                 )
                 try:
@@ -93,10 +92,6 @@ class PybulletServer:
                 joint = data.get('joint')
                 direction = data.get('direction')
                 step = data.get('step', 0.1)
-
-                if self.adaptive_mode:
-                    step *=  self.speed_factor
-
                 success,log_msg = self.robot.move_joint(joint,direction,step)
 
                 response={
@@ -143,17 +138,16 @@ class PybulletServer:
                 
             elif command == 'set_adaptive_mode':
                 self.adaptive_mode = data.get('enabled', False)
-                self.speed_factor = data.get('speed_factor', 0.6)
                 response={
                     'type': 'command_response',
                     'command':'set_adaptive_mode',
                     'success': True,
+                    'message': 'Adaptive mode has been set',
                     'adaptive_mode': self.adaptive_mode,
-                    'speed_factor': self.speed_factor,
                     'timestamp': time.time()
                 }
                 
-                logger.info(f"Adaptive mode: {self.adaptive_mode}, Speed factor: {self.speed_factor}")
+                logger.info(f"Adaptive mode: {self.adaptive_mode}, Speed mode: {self.speed_mode}")
                 
                 
             else:

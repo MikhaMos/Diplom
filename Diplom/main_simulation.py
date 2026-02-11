@@ -29,7 +29,7 @@ class KukaRobot:
         self.max_ik_iterations = 100 #максимальное количество итераций
         self.end_effector_link_index = 6
 
-        # Для автоматичекого редима
+        # Для автоматичекого режима
         self.automatic_mode = False
         self.automatic_thread = None
         self.automatic_lock = Lock()
@@ -37,25 +37,36 @@ class KukaRobot:
         self.target_orientations = []
         self.current_point_index = 0
         self.loop_enabled = True
-        self.automatic_move_speed = 0.8
 
-        # Ограничения рабочей зоны (x,y,z в)
-        self.workspace_limits = {
-            'normal':{
-                'x':[-0.8, 0.8],
-                'y':[-0.8, 0.8],
-                'z':[0.0, 2.0]
+        # Ограничения SSM зоны радиус
+        self.ssm_zones= {
+            'normal': {
+                'inner':2.5,
+                'outer':4
             },
-            'restricted':{
-                'x':[-0.4, 0.4],
-                'y':[-0.4, 0.4],
-                'z':[0.2, 0.8]
+            'restricted': {
+                'inner':4,
+                'outer':6
             }
         }
-        self.current_workspace = 'normal'
+        self.current_ssm_mode = 'normal'
+        self.current_speed_mode = 'full'
 
-        # Визуализация рабочей зоны
-        self.workspace_visual = None
+        self.robot_speeds = {
+            'automatic':{
+                'full':0.8,  # Полная скорость (зеленая/синяя зона)
+                'reduced':0.48 # Пониженная скорость (желтая/фиолетовая зона)
+            },
+            'manual':{
+                'full':0.6,  # Полная скорость (зеленая/синяя зона)
+                'reduced':0.36 # Пониженная скорость (желтая/фиолетовая зона)
+            }
+        }
+        self.zone_visuals = {
+            'outer':None, # Внешняя зона (желтая/фиолетовая)
+            'inner':None # Внутренняя зона (зеленая/синяя)
+        }
+        self.human_id=None
 
     def connect(self):
         if self.gui:
@@ -68,24 +79,37 @@ class KukaRobot:
         p.setGravity(0,0,-9.8)
 
         plane_id=p.loadURDF("plane.urdf")
-
+        #Стол
         table_pos = [0.0, 0.0, 0.0]
         table_ori = p.getQuaternionFromEuler([0, 0, 0])
-        self.table_id = p.loadURDF("table/table.urdf", table_pos, table_ori)   
-        
-        robot_start_pos =[0,0,0.6]
+        self.table_id = p.loadURDF("table/table.urdf", table_pos, table_ori)  
+        # конечное место работы
+        table_square_pos = [-1.3, -0.4, 0.0]
+        table_square_ori = p.getQuaternionFromEuler([0, 0, 0])
+        self.table_square_id = p.loadURDF("table_square/table_square.urdf", 
+                                          table_square_pos, 
+                                          table_square_ori) 
+        #Робот
+        robot_start_pos =[-0.5,0,0.6]
         robot_start_ori = p.getQuaternionFromEuler([0,0,0])
-
         self.robot_id = p.loadURDF("kuka_iiwa/model.urdf",
                                    robot_start_pos,
                                    robot_start_ori,
                                    useFixedBase=True)
+        #человек
+        human_start_pos = [-3.5,0,1.1]
+        human_start_ori = p.getQuaternionFromEuler([1.5,0,0])
+        self.human_id = p.loadURDF("humanoid/humanoid.urdf",
+                                   human_start_pos,
+                                   human_start_ori,
+                                   useFixedBase=True,
+                                   globalScaling=0.3)
         
         self.create_objects()
 
         self._init_joints()
 
-        self.visualize_workspace()
+        self.visualize_ssm_zones()
 
         self.sim_thread = Thread(target=self._simulation_loop, daemon=True)
         self.sim_thread.start()
@@ -139,7 +163,7 @@ class KukaRobot:
 
             p.stepSimulation()
             self._update_positions()
-            self._check_workspace_violation()
+            self._check_human_position()
             time.sleep(1/240)
     
     def _update_positions(self):
@@ -150,66 +174,115 @@ class KukaRobot:
         self.current_FramePos = list(self.end_effector_link_state[0])
         self.current_orientation = list(self.end_effector_link_state[1])
         
-        
-    
+    def visualize_ssm_zones(self):
+        for key in self.zone_visuals:
+            if self.zone_visuals[key] is not None:
+                p.removeBody(self.zone_visuals[key])
+                self.zone_visuals[key] = None
+                
+        # Получаем позицию базы робота
+        robot_pos,_= p.getBasePositionAndOrientation(self.robot_id)
+        zones = self.ssm_zones[self.current_ssm_mode]
 
-    def visualize_workspace(self):
-        if self.workspace_visual:
-            p.removeBody(self.workspace_visual)
 
-        limits = self.workspace_limits[self.current_workspace]
-
-        x_min, x_max = limits['x']
-        y_min, y_max = limits['y']
-        z_min, z_max = limits['z']
-
-        center = [(x_min+x_max)/2, (y_min+y_max)/2, (z_min+z_max)/2]
-        half_size = [(x_max-x_min)/2, (y_max-y_min)/2, (z_max-z_min)/2]
-
-        if self.current_workspace == 'normal':
-            color = [0,1,0,0.1] # Зеленый, полупрозрачный
+        if self.current_ssm_mode == 'normal':
+            inner_color=[1,1,0,0.18] # Желеный, полупрозрачный]
+            outer_color=[0,1,0,0.18] # Зеленый, полупрозрачный
+            inner_radius = zones['inner']
+            outer_radius = zones['outer']
         else:
-            color = [1,0,0,0.1] # Красный, полупрозрачный
+            inner_color=[1,0,1,0.10] # Финий, полупрозрачный]
+            outer_color=[0,0,1,0.10] # Сиолетовый, полупрозрачный
+            inner_radius = zones['inner']
+            outer_radius = zones['outer']
 
-        visual_shape =  p.createVisualShape(p.GEOM_BOX, halfExtents=half_size, rgbaColor=color) 
-        self.workspace_visual = p.createMultiBody(0, visual_shape, basePosition=center)
-    
-    def set_workspace(self, workspace_type):
-        if workspace_type in self.workspace_limits:
-            self.current_workspace = workspace_type
-            self.visualize_workspace()
-            logger.info(f"Workspace changed to {workspace_type}")
+        inner_visual_shape =  p.createVisualShape(
+            p.GEOM_SPHERE, 
+            radius=inner_radius, 
+            rgbaColor=inner_color
+            ) 
+        inner_collision_shape = p.createCollisionShape(
+            p.GEOM_SPHERE, 
+            radius=inner_radius
+            )
+        self.zone_visuals['inner'] = p.createMultiBody(
+            0,
+            inner_collision_shape,
+            inner_visual_shape,
+            basePosition=robot_pos
+        )
+        p.setCollisionFilterGroupMask(self.zone_visuals['inner'],-1,0,0)
+        p.changeVisualShape(self.zone_visuals['inner'],-1,rgbaColor=inner_color)
+
+        outer_visual_shape =  p.createVisualShape(
+            p.GEOM_SPHERE,
+            radius=outer_radius,
+            rgbaColor=outer_color
+        )
+        outer_collision_shape = p.createCollisionShape(
+            p.GEOM_SPHERE,
+            radius=outer_radius
+        )
+        self.zone_visuals['outer'] = p.createMultiBody(
+            0,
+            outer_collision_shape,
+            outer_visual_shape,
+            basePosition=robot_pos
+        )
+        p.setCollisionFilterGroupMask(self.zone_visuals['outer'],-1,0,0)
+        p.changeVisualShape(self.zone_visuals['outer'],-1,rgbaColor=outer_color)
+        
+        logger.info(f"SSM zones visualized: mode={self.current_ssm_mode}, inner={inner_radius}, outer={outer_radius}")
+        
+        
+    def set_adaptive_mode(self, adaptive_mode, speed_mode_type):
+        if adaptive_mode:
+            ssm_zone_type = 'restricted'
+        else:
+            ssm_zone_type = 'normal'
+        if ssm_zone_type in self.ssm_zones.keys():
+            self.current_ssm_mode = ssm_zone_type
+            self.visualize_ssm_zones()
+            logger.info(f"Workspace changed to {ssm_zone_type}")
+            self.current_speed_mode = speed_mode_type
             return True
         return False
     
-    def _check_workspace_violation(self):
-        #Проверка нарушений рабочей зоны
-        # получаем позицию конца эффектора
-        end_effector_pos = self.get_end_effector_position()
+    def _check_human_position(self):
+        #Проверка расстояния между роботом и человеком
+        if not self.human_id:
+            return 
         
+        robot_pos,_= p.getBasePositionAndOrientation(self.robot_id)
+        human_body_pos,_ = p.getBasePositionAndOrientation(self.human_id)
 
-        if end_effector_pos:
-            limits = self.workspace_limits[self.current_workspace]
+        dx = human_body_pos[0] - robot_pos[0]
+        dy = human_body_pos[1] - robot_pos[1]
+        dz = human_body_pos[2] - robot_pos[2] # игнорируем
+        distance = math.sqrt(dx*dx + dy*dy)
 
-            #Проверяем выходы за пределы
-            violation = False
-            if not limits['x'][0] <= end_effector_pos[0] <= limits['x'][1]:
-                violation = True
-            if not limits['y'][0] <= end_effector_pos[1] <= limits['y'][1]:
-                violation = True
-            if not limits['z'][0] <= end_effector_pos[2] <= limits['z'][1]:
-                violation = True
+        old_mode = self.current_ssm_mode
+        old_speed_mode = self.current_speed_mode
 
-            if violation:
-               logger.info(f"Workspace violation detected! Position: ({end_effector_pos[0]:.3f}, {end_effector_pos[1]:.3f}, {end_effector_pos[2]:.3f})")
-    
-    # только для _check_workspace_violation (возможно поменять)
-    def get_end_effector_position(self):
-        if self.robot_id and len(self.joint_indices) > 0:
-            end_effector_link = 6
-            joint_state = p.getLinkState(self.robot_id, end_effector_link, computeForwardKinematics=True)
-            return joint_state[0]
-        return None
+        if distance < self.ssm_zones[self.current_ssm_mode]['outer'] and distance > self.ssm_zones[self.current_ssm_mode]['inner']:
+            #человек внутри зеленой зоны - полная рабочая скорость
+            self.current_speed_mode = 'full'
+        elif distance < self.ssm_zones[self.current_ssm_mode]['inner']:
+            #человек внутри желтой зоны - половина рабочей скорости
+            self.current_speed_mode = 'reduced'
+        elif distance > self.ssm_zones[self.current_ssm_mode]['outer']:
+            # человек вне зон
+            self.current_speed_mode = 'full'
+        # else человек у робота
+
+        self.automatic_move_speed = self.robot_speeds['automatic'][self.current_speed_mode]
+        self.manual_move_speed = self.robot_speeds['manual'][self.current_speed_mode]
+
+        if old_speed_mode != self.current_speed_mode:
+            logger.info(f"Speed mode changed to {self.current_speed_mode}")
+        if old_mode != self.current_ssm_mode:
+            logger.info(f"SSM mode changed to {self.current_ssm_mode}")
+
     
     def move_joint(self, joint_index, direction, step=0.1):
         if 0 <= joint_index < len(self.joint_indices):
@@ -227,7 +300,7 @@ class KukaRobot:
                 p.POSITION_CONTROL,
                 targetPosition=new_pos,
                 force=500,
-                maxVelocity=0.5
+                maxVelocity=self.manual_move_speed
             )
             return True, f"Joint {joint_index} moved to {new_pos:.3f}"
         return False, f"Invalid joint index: {joint_index}"
@@ -237,7 +310,8 @@ class KukaRobot:
         return {
                 'JointPositions': positions_deg,
                 'FramePositions':self.current_FramePos,
-                'End_effector_Orientation':self.current_orientation
+                'End_effector_Orientation':self.current_orientation,
+                'velosity': self.automatic_move_speed if self.automatic_mode else self.manual_move_speed
                 }
 
     def reset_positions(self):
@@ -299,68 +373,26 @@ class KukaRobot:
             timeout = 5.0
         
             while time.time() - start_time < timeout:
-                
+
+                time.sleep(2)
                 current_state = p.getLinkState(self.robot_id, self.end_effector_link_index, computeForwardKinematics=True)
                 current_position = current_state[0]
                 current_orientation = current_state[1]
                 
                 position_distance = np.linalg.norm(np.array(current_position) - np.array(target_position))
-                """
-                orientation_ok = True
-                if target_orientation is not None:
-                    orientation_diff = self.quaternion_angle_diff(current_orientation, target_orientation)
-                    orientation_ok = orientation_diff < 0.2  # 0.1 радиан (~5.7 градусов)
-                else:
-                    orientation_ok = True
-                print("orientation_diff",orientation_diff)
-                print("position_distance",position_distance)
-                print("orientation_ok",orientation_ok)
-                """
-                if position_distance < 0.55: #and orientation_ok: # Допуск  см
+
+                
+                if position_distance < 0.55: #and orientation_ok: # Допуск 
                     logger.info(f"Move to point IK completed in {time.time() - start_time:.3f} seconds")
                     logger.debug(f"Point completed, distance: {position_distance:.3f}")
                     return True, f"Point {target_position} completed"
-                    
                 time.sleep(2)
                 return False, f"Move to point IK timed out after {timeout} seconds"
         
         except Exception as e:
             logger.error(f"Error moving to point with IK: {e}")
             return False, str(e)
-    """
-    def quaternion_angle_diff(self, q1, q2):
-        # Вычисление угловой разницы медлу двумя квартерионами
 
-        # Нормализуем кватернионы
-        q1_norm=np.linalg.norm(q1)
-        q2_norm=np.linalg.norm(q2)
-        if q1_norm == 0 or q2_norm == 0:
-            return math.pi
-        
-        q1 = np.array(q1) / q1_norm
-        q2 = np.array(q2) / q2_norm
-
-        # Скалярное произведение квартерионов
-        dot = np.dot(q1, q2)
-
-         # Кватернионы q и -q представляют одну и ту же ориентацию!
-        # Берем абсолютное значение и ограничиваем
-        dot = abs(dot)
-        dot = abs(dot)
-        dot = min(1.0,max(-1.0,dot))
-
-        # Угол между ориентациями
-        angle = 2 * math.acos(dot)
-
-        # Кватернионы имеют двойное покрытие: q ≡ -q
-        # Поэтому минимальный угол всегда <= π/2
-        if angle > math.pi:
-            angle = 2 * math.pi - angle
-        
-        return angle
-    """
-
-    
     def start_automatic_mode(self,points,orientation,loop_programming = True):
         with self.automatic_lock:
             if self.automatic_mode:
@@ -375,12 +407,11 @@ class KukaRobot:
             self.loop_enabled = loop_programming
             self.automatic_mode = True
 
-            #self.target_orientations = [self.current_orientation for _ in range(len(points))]
             self.automatic_thread = Thread(target=self._automatic_mode_loop, daemon=True)
             self.automatic_thread.start()
 
             logger.info(f"Automatic mode started. Points: {len(self.target_points)}")
-            return True
+            return f'Automatic mode started. Points: {len(self.target_points)}'
         
     def stop_automatic_mode(self):
         with self.automatic_lock:
@@ -388,6 +419,7 @@ class KukaRobot:
                 return
             self.automatic_mode = False
             logger.info("Automatic mode stopped")
+        return f'Automatic mode stopped'
     
     def _automatic_mode_loop(self):
         #Цикл автоматического управления

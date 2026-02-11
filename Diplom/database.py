@@ -138,7 +138,7 @@ class Database:
             self.survey_interval_minutes = 120 # 2 часа
 
 
-    def save_telemetry(self,positions: dict, velocity:float, adaptive_mode: bool=False):
+    def save_telemetry(self, positions: str, velocity:float, adaptive_mode: bool=False):
         #Сохраняет телеметрию, поддерживая максимум 50 записей
         cursor = self.connection.cursor()
 

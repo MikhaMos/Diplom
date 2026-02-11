@@ -17,7 +17,7 @@ class PyBulletClient(QObject):
     disconnected = Signal()
     positions_received = Signal(dict)
     error_occurred = Signal(str)
-    command_response = Signal(dict)
+    command_response = Signal(str)
 
     def __init__(self, uri: str ="ws://localhost:8765"):
         super().__init__()
@@ -57,6 +57,10 @@ class PyBulletClient(QObject):
                         'End_effector_Orientation':data.get('End_effector_Orientation'),
                         }
                     self.positions_received.emit(positions)
+                else:
+                    response=data.get('message')
+                    self.command_response.emit(response)
+
         except Exception as e:
             logger.error(f"Error while monitoring positions: {e}")
             self.error_occurred.emit(str(e))
