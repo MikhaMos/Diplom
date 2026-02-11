@@ -1,0 +1,10 @@
+adaptive_robot_control/
+├── main.py                    # Точка входа
+├── gui.ui                     # Главный интерфейс Qt
+├── database.py               # Работа с SQLite
+├── ml_model.py              # ML модель
+├── server_pybullet.py       # Сервер для симуляции
+├── server_ml.py             # Сервер для ML
+├── client_pybullet.py       # Клиент для симуляции
+├── client_ml.py             # Клиент для ML
+└── main_simulation.py       # Симуляция PyBullet
