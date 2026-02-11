@@ -40,6 +40,7 @@ class MainWindow(QMainWindow):
         self.robot_client.disconnected.connect(self.on_robot_disconnect)
         self.robot_client.positions_received.connect(self.on_robot_positions)
         self.robot_client.error_occurred.connect(self.on_robot_error)
+        self.robot_client.command_response.connect(self.log_message)
 
         self.ml_client.connected.connect(self.on_ml_connect)
         self.ml_client.disconnected.connect(self.on_ml_disconnect)
@@ -408,19 +409,17 @@ class MainWindow(QMainWindow):
 
         self.adaptation.apply_simple_style(self.ui)
 
-        #Отправляем команду на замедление робота 
+        #Отправляем команду адаптацию робота
         if hasattr(self, 'robot_client') and self.robot_client.running:
-            self.robot_client.send_command('set_adaptive_mode',enabled=True, speed_factor=0.6)
+            self.robot_client.send_command('set_adaptive_mode',enabled=True)
     
     def disable_adaptive_mode(self):
         self.adaptive_mode = False
         self.log_message("Adaptive mode disabled")
-
         self.adaptation.apply_normal_style(self.ui)
-
-        #Отправляем команду на возврат скорости робота 
+        #Отправляем команду на возврат к обычному режиму робота
         if hasattr(self, 'robot_client') and self.robot_client.running:
-            self.robot_client.send_command('set_adaptive_mode',enabled=False, speed_factor=1.0)
+            self.robot_client.send_command('set_adaptive_mode', enabled=False)
 
     
     @Slot()
