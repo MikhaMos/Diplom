@@ -26,7 +26,7 @@ class KukaRobot:
 
         # Для обратной кинематики
         self.ik_tolerance = 0.01 #допуск ошибки
-        self.max_ik_iterations = 100 #максимальное количество итераций
+        self.max_ik_iterations = 300 #максимальное количество итераций
         self.end_effector_link_index = 6
 
         # Для автоматичекого режима
@@ -235,7 +235,7 @@ class KukaRobot:
         logger.info(f"SSM zones visualized: mode={self.current_ssm_mode}, inner={inner_radius}, outer={outer_radius}")
         
         
-    def set_adaptive_mode(self, adaptive_mode, speed_mode_type):
+    async def set_adaptive_mode(self, adaptive_mode, speed_mode_type):
         if adaptive_mode:
             ssm_zone_type = 'restricted'
         else:
@@ -299,7 +299,7 @@ class KukaRobot:
                 self.joint_indices[joint_index],
                 p.POSITION_CONTROL,
                 targetPosition=new_pos,
-                force=500,
+                force=800,
                 maxVelocity=self.manual_move_speed
             )
             return True, f"Joint {joint_index} moved to {new_pos:.3f}"
@@ -320,9 +320,9 @@ class KukaRobot:
                 self.robot_id,
                 joint_idx,
                 p.POSITION_CONTROL,
-                targetPosition=0,
-                force=500,
-                maxVelocity=0.5
+                targetPosition=0.0,
+                force=800,
+                maxVelocity=self.automatic_move_speed
             )
 
     def calculate_inverse_kinematics(self, target_position, target_orientation): #target_orientation=None):
@@ -360,34 +360,40 @@ class KukaRobot:
                 return False, "Failed to calculate inverse kinematics"
 
             for i, joint_idx in enumerate(self.joint_indices):
-                p.setJointMotorControl2(
-                    self.robot_id,
-                    joint_idx,
-                    p.POSITION_CONTROL,
-                    targetPosition=joint_angles[i],
-                    force=500,
-                    maxVelocity=self.automatic_move_speed
-                )
-            
+                    p.setJointMotorControl2(
+                        self.robot_id,
+                        joint_idx,
+                        p.POSITION_CONTROL,
+                        targetPosition=joint_angles[i],
+                        force=800,
+                        maxVelocity=self.automatic_move_speed
+                    )
             start_time = time.time()
-            timeout = 5.0
+            timeout = 10.0
+            position_tolerance = 0.03
+            #orientation_tolerance = 0.1
         
             while time.time() - start_time < timeout:
-
-                time.sleep(2)
+                if self.automatic_mode == False:
+                    return False, "Automatic mode is off"
+                p.stepSimulation()
+                
                 current_state = p.getLinkState(self.robot_id, self.end_effector_link_index, computeForwardKinematics=True)
                 current_position = current_state[0]
                 current_orientation = current_state[1]
-                
                 position_distance = np.linalg.norm(np.array(current_position) - np.array(target_position))
-
                 
-                if position_distance < 0.55: #and orientation_ok: # Допуск 
+                # Считаем, что кватернионы уже нормализованы
+                #dot_product = np.abs(np.dot(current_orientation, target_orientation))
+                # Угол = 2 * arccos(dot_product), но для близости можно сравнивать dot_product с порогом
+                #orientation_ok = dot_product > np.cos(orientation_tolerance/2)
+
+                if position_distance < position_tolerance: #and orientation_ok: # Допуск 
                     logger.info(f"Move to point IK completed in {time.time() - start_time:.3f} seconds")
                     logger.debug(f"Point completed, distance: {position_distance:.3f}")
                     return True, f"Point {target_position} completed"
-                time.sleep(2)
-                return False, f"Move to point IK timed out after {timeout} seconds"
+                time.sleep(0.05)
+            return False, f"Move to point IK timed out after {timeout} seconds"
         
         except Exception as e:
             logger.error(f"Error moving to point with IK: {e}")
@@ -426,6 +432,8 @@ class KukaRobot:
         logger.info("Automatic mode loop started")
         while self.automatic_mode and self.is_running:
             try:
+                if self.automatic_mode == False:
+                    break
                 with self.automatic_lock:
                     if not self.target_points or self.current_point_index >= len(self.target_points):
 
