@@ -21,7 +21,7 @@ class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("Control panel")
-        self.resize(1200,800)
+        self.resize(874,667)
         
         current_dir = os.path.dirname(os.path.abspath(__file__))
         ui_file=os.path.join(current_dir,'Gui.ui')
@@ -54,6 +54,8 @@ class MainWindow(QMainWindow):
         self.current_fatigue_level = 0
         self.current_frame_pos_robot = []
         self.current_orientation_robot = []
+        self.current_joint_positions = []
+        self.last_positions = []
 
         # переменные для автоматики
         self.automatic_mode_active = False
@@ -84,6 +86,13 @@ class MainWindow(QMainWindow):
         self.page_button_group.addButton(self.ui.ControlPageButton)
         self.page_button_group.addButton(self.ui.SurveyPageButton)
         self.page_button_group.setExclusive(True)
+
+        #Текста
+        self.ui.StatusPanel.setText(f"Status: Инициализациия...")
+        self.ui.Label_ML_status.setText(f"ML: не подключена")
+        self.ui.Label_robot_status.setText(f"Robot: не подлючен")
+        self.ui.Label_adaptive_mode.setText(f"Упрощенный режим: выкл")
+        self.ui.label_moving.setText(f"❌")
         
         # Подключаем переключение страниц
         self.ui.ControlPageButton.clicked.connect(self.show_control_page)
@@ -133,7 +142,7 @@ class MainWindow(QMainWindow):
             button.setAutoRepeatInterval(100)
             joint_index = self.joint_map.index(joint_name)
             button.clicked.connect(
-                lambda checked, j=joint_index, d=direction: self.move_joint(j, d)
+                lambda checked, j=joint_index, d=direction: self.move_joint(j, d), 
             )
     
     def setup_survey(self):
@@ -175,8 +184,6 @@ class MainWindow(QMainWindow):
         # ЗАпускаем в отдельных потоках
         self.robot_thread = self.robot_client.run_in_thread()
         self.ml_thread = self.ml_client.run_in_thread() 
-
-        
 
     @Slot()
     def show_control_page(self):
@@ -268,7 +275,6 @@ class MainWindow(QMainWindow):
 
         self.log_message(f"Answered survey: {fatigue_level}")
 
-
         # Сбрасываем выбор
         self.survey_group.setExclusive(False)
         checked_button = self.survey_group.checkedButton()
@@ -286,7 +292,6 @@ class MainWindow(QMainWindow):
         """Обновление интервала опроса на основе количества данных"""
         training_data=self.db.get_training_data()
         count=len(training_data)
-
         if count<1440:
             interval= 30*60*1000 # 30 минут
         elif count<=2880:
@@ -317,10 +322,17 @@ class MainWindow(QMainWindow):
         self.current_frame_pos_robot=positions.get('FramePositions')
         self.current_orientation_robot=positions.get('End_effector_Orientation')
         text=""
-        for i, pos in enumerate(positions.get('JointPositions')):
+        self.current_joint_positions=positions.get('JointPositions')
+        for i, pos in enumerate(self.current_joint_positions):
             text += f"Joint {i}: {pos:.2f}\n"
         text += f"Frame Position: {["%.2f" % framepos for framepos in self.current_frame_pos_robot]}"
         self.ui.OutputPos.setPlainText(text)
+        if self.last_positions and any(abs(c-l) > 0.01 for c,l in zip(self.current_joint_positions,self.last_positions)):
+            self.ui.label_moving.setText(f"✅")
+        else:
+            self.ui.label_moving.setText(f"❌")
+        self.last_positions= self.current_joint_positions
+        
 
     @Slot()
     def start_automatic_mode(self):
@@ -378,9 +390,11 @@ class MainWindow(QMainWindow):
         self.log_message(f"Robot error: {error}")
 
     def on_robot_connect(self):
+        self.ui.Label_robot_status.setText(f"Robot подключен")
         self.log_message("Robot connected")
 
     def on_robot_disconnect(self):
+        self.ui.Label_robot_status.setText(f"Robot отключен")
         self.log_message("Robot disconnected")
     
     def on_ml_prediction(self, prediction):
@@ -398,14 +412,17 @@ class MainWindow(QMainWindow):
         self.log_message(f"ML error: {error}")
     
     def on_ml_connect(self):
+        self.ui.Label_ML_status.setText(F"ML подключена")
         self.log_message("ML connected")
     
     def on_ml_disconnect(self):
+        self.ui.Label_ML_status.setText(F"ML отключена")
         self.log_message("ML disconnected")
 
     def enable_adaptive_mode(self):
         self.adaptive_mode = True
         self.log_message("Adaptive mode enabled")
+        self.ui.Label_adaptive_mode.setText(f"Адаптивный режим вкл")
 
         self.adaptation.apply_simple_style(self.ui)
 
@@ -416,6 +433,7 @@ class MainWindow(QMainWindow):
     def disable_adaptive_mode(self):
         self.adaptive_mode = False
         self.log_message("Adaptive mode disabled")
+        self.ui.Label_adaptive_mode.setText(f"Адаптивный режим выкл")
         self.adaptation.apply_normal_style(self.ui)
         #Отправляем команду на возврат к обычному режиму робота
         if hasattr(self, 'robot_client') and self.robot_client.running:

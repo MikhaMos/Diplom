@@ -127,6 +127,7 @@ class PybulletServer:
                 }
             
             elif command == 'stop_automatic_mode':
+                self.robot.automatic_mode = False
                 success,log_msg = self.robot.stop_automatic_mode()
                 response={
                     'type': 'command_response',
@@ -138,6 +139,7 @@ class PybulletServer:
                 
             elif command == 'set_adaptive_mode':
                 self.adaptive_mode = data.get('enabled', False)
+                self.robot.set_adaptive_mode(self.adaptive_mode, 'reduced' if self.adaptive_mode else 'full')
                 response={
                     'type': 'command_response',
                     'command':'set_adaptive_mode',

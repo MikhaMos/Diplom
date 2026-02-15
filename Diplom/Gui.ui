@@ -6,8 +6,8 @@
    <rect>
     <x>0</x>
     <y>0</y>
-    <width>880</width>
-    <height>702</height>
+    <width>874</width>
+    <height>667</height>
    </rect>
   </property>
   <property name="windowTitle">
@@ -32,7 +32,7 @@
        <rect>
         <x>490</x>
         <y>10</y>
-        <width>171</width>
+        <width>181</width>
         <height>471</height>
        </rect>
       </property>
@@ -44,7 +44,7 @@
         <rect>
          <x>0</x>
          <y>10</y>
-         <width>160</width>
+         <width>181</width>
          <height>461</height>
         </rect>
        </property>
@@ -289,7 +289,7 @@ p, li { white-space: pre-wrap; }
         <x>0</x>
         <y>480</y>
         <width>491</width>
-        <height>71</height>
+        <height>61</height>
        </rect>
       </property>
       <property name="title">
@@ -630,7 +630,7 @@ p, li { white-space: pre-wrap; }
      <rect>
       <x>10</x>
       <y>90</y>
-      <width>51</width>
+      <width>171</width>
       <height>21</height>
      </rect>
     </property>
@@ -643,7 +643,7 @@ p, li { white-space: pre-wrap; }
      <rect>
       <x>10</x>
       <y>120</y>
-      <width>161</width>
+      <width>171</width>
       <height>81</height>
      </rect>
     </property>
@@ -655,27 +655,27 @@ p, li { white-space: pre-wrap; }
       <rect>
        <x>0</x>
        <y>0</y>
-       <width>160</width>
+       <width>171</width>
        <height>80</height>
       </rect>
      </property>
      <layout class="QVBoxLayout" name="verticalLayout">
       <item>
-       <widget class="QLabel" name="label_2">
+       <widget class="QLabel" name="Label_adaptive_mode">
         <property name="text">
          <string>TextLabel</string>
         </property>
        </widget>
       </item>
       <item>
-       <widget class="QLabel" name="label_3">
+       <widget class="QLabel" name="Label_ML_status">
         <property name="text">
          <string>TextLabel</string>
         </property>
        </widget>
       </item>
       <item>
-       <widget class="QLabel" name="label_4">
+       <widget class="QLabel" name="Label_robot_status">
         <property name="text">
          <string>TextLabel</string>
         </property>
@@ -720,7 +720,7 @@ p, li { white-space: pre-wrap; }
      </property>
      <layout class="QHBoxLayout" name="horizontalLayout_14">
       <item>
-       <widget class="QLabel" name="label_5">
+       <widget class="QLabel" name="label_moving">
         <property name="text">
          <string>TextLabel</string>
         </property>
@@ -971,7 +971,7 @@ p, li { white-space: pre-wrap; }
     <rect>
      <x>0</x>
      <y>0</y>
-     <width>880</width>
+     <width>874</width>
      <height>21</height>
     </rect>
    </property>
