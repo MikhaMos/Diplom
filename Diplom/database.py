@@ -1,10 +1,12 @@
 import sqlite3
-from datetime import datetime, timedelta
+from datetime import timedelta
 import os
 from typing import List, Optional, Dict, Any
 import threading 
 import json
 import logging
+
+from time_controller import now
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -113,12 +115,13 @@ class Database:
 
     def save_survey(self, fatigue_level: int):
         cursor = self.connection.cursor()
+        current_time = now()
 
         cursor.execute("""
             INSERT INTO Survey_response (timestamp, fatigue_level, hour_of_day, day_of_week)
             values(?,?,?,?)
         """,
-            (datetime.now(), fatigue_level, datetime.now().hour, datetime.now().weekday()))
+            (current_time, fatigue_level, current_time.hour, current_time.weekday()))
         self.connection.commit()
        
         self._update_survey_interval()
@@ -160,7 +163,7 @@ class Database:
             (timestamp, positions, velocity, adaptive_mode)
             values(?,?,?,?)
         """,
-            (datetime.now(), positions_json, velocity, adaptive_mode))
+            (now(), positions_json, velocity, adaptive_mode))
         self.connection.commit()
     
     def log_command(self, source: str, command: str, parameters: str, success: bool = True):
@@ -185,7 +188,7 @@ class Database:
             INSERT INTO command_log (timestamp, source, command, parameters, success)
             values(?,?,?,?,?)
         """,
-            (datetime.now().strftime("%Y-%m-%d %H:%M:%S"), source, command, parameters, success))
+            (now().strftime("%Y-%m-%d %H:%M:%S"), source, command, parameters, success))
         self.connection.commit()
 
     def get_training_data(self, limit: int= 1000):
@@ -204,11 +207,12 @@ class Database:
         """Логирует предсказание ML модели"""
         cursor = self.connection.cursor()
         features_json = json.dumps(features)
+        current_time = now()
         cursor.execute("""
             INSERT INTO ml_predictions (timestamp, hour_of_day, day_of_week, features, prediction, confidence, threshold_used, adaptation_triggered)
             values(?,?,?,?,?,?,?,?)
         """,
-            (datetime.now().strftime("%Y-%m-%d %H:%M:%S"), datetime.now().hour, datetime.now().weekday(), features_json, prediction, coffidence, threshold_used, adaptation_triggered))
+            (current_time.strftime("%Y-%m-%d %H:%M:%S"), current_time.hour, current_time.weekday(), features_json, prediction, coffidence, threshold_used, adaptation_triggered))
         self.connection.commit()
 
     def stop_survey_scheduler(self):

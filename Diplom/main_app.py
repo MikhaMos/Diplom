@@ -9,8 +9,8 @@ from PySide6.QtCore import Qt, QTimer, Signal, QObject, Slot, QThread
 import json
 import asyncio
 import threading
-from datetime import datetime
 
+from time_controller import now, time_controller
 
 from database import Database
 from client_App_pybullet import PyBulletClient
@@ -71,6 +71,8 @@ class MainWindow(QMainWindow):
 
         # Таймеры 
         self.setup_timers()
+
+        self.log_message(f"Startup time: {now().strftime('%H:%M:%S')}")
 
         # Логирование
         self.log_message("Application started")
@@ -167,7 +169,7 @@ class MainWindow(QMainWindow):
         # Таймеры
         self.timer = QTimer(self)
         self.timer.timeout.connect(self.update_time)
-        self.timer.start(1000)
+        self.timer.start(100)
 
         # Таймеры для автоматисческого опроса(каждые 30 минут)
         self.survey_timer = QTimer()
@@ -268,6 +270,14 @@ class MainWindow(QMainWindow):
         # Сохраняем опрос в базу данных
         fatigue_level = select_id 
         self.db.save_survey(fatigue_level)
+
+        # Сохраняем опрос в лог
+        self.db.log_command(
+            source='main_app',
+            command='submit_survey',
+            parameters=f"fatigue_level={fatigue_level}",
+            success=True
+        )
 
         # Обновляем состояние
         self.current_fatigue_level = fatigue_level
@@ -442,12 +452,12 @@ class MainWindow(QMainWindow):
     
     @Slot()
     def update_time(self):
-        current_time = datetime.now().strftime( "%H:%M:%S")
+        current_time = now().strftime( "%H:%M:%S")
         self.ui.TimeLabel.setText(current_time)
 
     def log_message(self, message):
         #Логирование сообщений в интерфейс
-        timestamp =datetime.now().strftime("%H:%M:%S")
+        timestamp = now().strftime("%H:%M:%S")
         self.ui.Output.append(f"[{timestamp }] {message}")
 
     def closeEvent(self,event):
@@ -460,7 +470,7 @@ class MainWindow(QMainWindow):
         
         if hasattr(self, 'db'):
             self.db.close()
-
+        QApplication.processEvents()
         event.accept()
 
 def main():

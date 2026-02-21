@@ -3,11 +3,13 @@ import asyncio
 import json
 from database import Database
 import logging
-from datetime import datetime
+
 from typing import Optional,Dict,Any, List
 import threading
 from threading import Thread
 from PySide6.QtCore import Signal, QObject
+
+from time_controller import now 
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -45,12 +47,12 @@ class MLClient(QObject):
                 self.error_occurred.emit(str(e))
                 raise
     
-    async def get_prediction_async(self, timestamp:datetime= None) -> Dict[str, Any]:
+    async def get_prediction_async(self, timestamp = None) -> Dict[str, Any]:
         if not self.websocket or not self.running:
             raise ConnectionError("Not connected to server")
         try:
             if timestamp is None:
-                timestamp = datetime.now()
+                timestamp = now()
             message = {
                 "command": "predict",
                 "timestamp": timestamp.isoformat()
@@ -64,7 +66,7 @@ class MLClient(QObject):
 
                 features = {
                     'hour': timestamp.hour,
-                    'day_of_week': timestamp.weekday()
+                    'day_of_week': timestamp.weekday
                 }
 
                 self.db.log_ml_prediction(

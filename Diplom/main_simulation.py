@@ -417,7 +417,7 @@ class KukaRobot:
             self.automatic_thread.start()
 
             logger.info(f"Automatic mode started. Points: {len(self.target_points)}")
-            return f'Automatic mode started. Points: {len(self.target_points)}'
+            return  True,f'Automatic mode started. Points: {len(self.target_points)}'
         
     def stop_automatic_mode(self):
         with self.automatic_lock:
@@ -425,7 +425,7 @@ class KukaRobot:
                 return
             self.automatic_mode = False
             logger.info("Automatic mode stopped")
-        return f'Automatic mode stopped'
+        return True, f'Automatic mode stopped'
     
     def _automatic_mode_loop(self):
         #Цикл автоматического управления

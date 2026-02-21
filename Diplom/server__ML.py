@@ -3,11 +3,12 @@ import websockets
 from websockets.asyncio.server import serve
 import json
 import signal
-from datetime import datetime 
 from ml_model import FatiguePredictor
 from database import Database
 import logging
 import numpy as np
+
+from time_controller import now
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -36,10 +37,18 @@ class MLServer:
 
                     if command == 'predict':
                         timestamp_str = data.get('timestamp')
-                        timestamp = datetime.fromtimestamp(timestamp) if timestamp_str else datetime.now()
+                        if timestamp_str:
+                            try:
+                                from datetime import datetime
+                                timestamp = datetime.fromtimestamp(timestamp)
+                            except:
+                                timestamp = now()
+                        else:
+                            timestamp = now()
+                         
 
                         hour = timestamp.hour
-                        day_of_week = timestamp.weekday()
+                        day_of_week = timestamp.weekday
 
                         prediction, confidence  = self.model.predict([[hour, day_of_week]])
                         
