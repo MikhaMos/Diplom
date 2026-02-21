@@ -5,7 +5,6 @@ import logging
 import threading 
 from typing import Optional,Dict,Any
 from database import Database
-from datetime import datetime
 from PySide6.QtCore import Signal, QObject
 
 logging.basicConfig(level=logging.INFO)
@@ -64,6 +63,7 @@ class PyBulletClient(QObject):
                     self.positions_received.emit(positions)
                 else:
                     response=data.get('message')
+                    
                     self.command_response.emit(response)
         except Exception as e:
             logger.error(f"Error while monitoring positions: {e}")

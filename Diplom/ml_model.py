@@ -1,11 +1,12 @@
 import numpy as np
 import pickle
 import os
-from datetime import datetime
 from typing import Tuple, Optional
 from sklearn.linear_model import LogisticRegression
 from sklearn.preprocessing import StandardScaler
 import logging
+
+from time_controller import now
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -44,10 +45,10 @@ class FatiguePredictor:
 
         self.save_model()
 
-    def extract_features(self, timestamp: datetime = None) -> np.ndarray:
+    def extract_features(self, timestamp: None) -> np.ndarray:
         #"""Извлекает признаки из времени"""
         if timestamp is None:
-            timestamp = datetime.now()
+            timestamp = now()
 
         #Час дня (преобразуем в циклические признаки
         hour = timestamp.hour
@@ -65,7 +66,7 @@ class FatiguePredictor:
 
         return np.array([hour_sin, hour_cos, day_of_week, hours_since_start, is_afternoon])
 
-    def predict(self, timestamp:datetime=None) -> Tuple[bool,float]:
+    def predict(self, timestamp: None) -> Tuple[bool,float]:
         """Предсказывает усталость и возвращает уверенность"""
         if self.model is None:
             return False, 0.0

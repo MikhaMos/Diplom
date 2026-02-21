@@ -1,721 +1,593 @@
-main_simulation:
-
-import pybullet as p
-import pybullet_data
-import time
+main_app:
+import sys
+import os
+from PySide6 import QtUiTools
+from PySide6.QtWidgets import (QApplication, QCheckBox, QGroupBox, QHBoxLayout,
+    QLabel, QMainWindow, QMenuBar, QPushButton,
+    QRadioButton, QSizePolicy, QStackedWidget, QStatusBar,
+    QTextEdit, QVBoxLayout, QWidget, QMessageBox, QButtonGroup)
+from PySide6.QtCore import Qt, QTimer, Signal, QObject, Slot, QThread
 import json
-import math
-import numpy as np
-from threading import Thread, Lock
-import logging
+import asyncio
+import threading
 
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
+from time_controller import now
 
-class KukaRobot:
-    def __init__(self, gui=True):
-        self.gui = gui
-        self.physics_client = None
-        self.robot_id=None
-        self.joint_indices = []
-        self.joint_limits = []
-        self.current_positions = [0.0] * 6
-        self.current_FramePos = [0.0]*3
-        self.current_orientation = [0.0, 0.0, 0.0, 1.0] # [x,y,z,w]
+from database import Database
+from client_App_pybullet import PyBulletClient
+from client_App_ml import MLClient
+import adaptation
+
+class MainWindow(QMainWindow):
+    def __init__(self):
+        super().__init__()
+        self.setWindowTitle("Control panel")
+        self.resize(874,667)
         
+        current_dir = os.path.dirname(os.path.abspath(__file__))
+        ui_file=os.path.join(current_dir,'Gui.ui')
 
-        self.is_running=True
+        loader = QtUiTools.QUiLoader()
+        self.ui =loader.load(ui_file)
+        self.setCentralWidget(self.ui)
 
-        # Для обратной кинематики
-        self.ik_tolerance = 0.01 #допуск ошибки
-        self.max_ik_iterations = 300 #максимальное количество итераций
-        self.end_effector_link_index = 6
+        # инициализация компонентов
+        self.robot_client = PyBulletClient()
+        self.adaptation = adaptation.AdaptationManager()
+        self.ml_client = MLClient()
+        self.db = Database()
 
-        # Для автоматичекого режима
-        self.automatic_mode = False
+        self.robot_client.connected.connect(self.on_robot_connect)
+        self.robot_client.disconnected.connect(self.on_robot_disconnect)
+        self.robot_client.positions_received.connect(self.on_robot_positions)
+        self.robot_client.error_occurred.connect(self.on_robot_error)
+        self.robot_client.command_response.connect(self.log_message)
+
+        self.ml_client.connected.connect(self.on_ml_connect)
+        self.ml_client.disconnected.connect(self.on_ml_disconnect)
+        self.ml_client.predictions_received.connect(self.on_ml_prediction)
+        self.ml_client.error_occurred.connect(self.on_ml_error)
+
+        #self.adaptation.apply_simple_style(self.ui) #Стиль по умолчанию
+        # Состояния
+        self.adaptive_mode = False
+        self.survey_answered = False
+        self.current_fatigue_level = 0
+        self.current_frame_pos_robot = []
+        self.current_orientation_robot = []
+        self.current_joint_positions = []
+        self.last_positions = []
+
+        # переменные для автоматики
+        self.automatic_mode_active = False
         self.automatic_thread = None
-        self.automatic_lock = Lock()
-        self.target_points = []
-        self.target_orientations = []
-        self.current_point_index = 0
-        self.loop_enabled = True
+        self.points_robot=[]
+        self.orientation_robot=[]
 
-        # Ограничения SSM зоны радиус
-        self.ssm_zones= {
-            'normal': {
-                'inner':2.5,
-                'outer':4
-            },
-            'restricted': {
-                'inner':4,
-                'outer':6
-            }
-        }
-        self.current_ssm_mode = 'normal'
-        self.current_speed_mode = 'full'
+        # настройка интерфейса
+        self.setup_ui()
 
-        self.robot_speeds = {
-            'automatic':{
-                'full':0.8,  # Полная скорость (зеленая/синяя зона)
-                'reduced':0.48 # Пониженная скорость (желтая/фиолетовая зона)
-            },
-            'manual':{
-                'full':0.6,  # Полная скорость (зеленая/синяя зона)
-                'reduced':0.36 # Пониженная скорость (желтая/фиолетовая зона)
-            }
-        }
-        self.zone_visuals = {
-            'outer':None, # Внешняя зона (желтая/фиолетовая)
-            'inner':None # Внутренняя зона (зеленая/синяя)
-        }
-        self.human_id=None
+        #Подключение к серверам
+        self.connect_to_servers()
 
-    def connect(self):
-        if self.gui:
-            self.physics_client = p.connect(p.GUI)
-            p.configureDebugVisualizer(p.COV_ENABLE_GUI, 0)
-        else:
-            self.physics_client = p.connect(p.DIRECT)
+        # Таймеры 
+        self.setup_timers()
 
-        p.setAdditionalSearchPath(pybullet_data.getDataPath())
-        p.setGravity(0,0,-9.8)
+        self.log_message(f"Startup time: {now().strftime('%H:%M:%S')}")
 
-        plane_id=p.loadURDF("plane.urdf")
-        #Стол
-        table_pos = [0.0, 0.0, 0.0]
-        table_ori = p.getQuaternionFromEuler([0, 0, 0])
-        self.table_id = p.loadURDF("table/table.urdf", table_pos, table_ori)  
-        # конечное место работы
-        table_square_pos = [-1.3, -0.4, 0.0]
-        table_square_ori = p.getQuaternionFromEuler([0, 0, 0])
-        self.table_square_id = p.loadURDF("table_square/table_square.urdf", 
-                                          table_square_pos, 
-                                          table_square_ori) 
-        #Робот
-        robot_start_pos =[-0.5,0,0.6]
-        robot_start_ori = p.getQuaternionFromEuler([0,0,0])
-        self.robot_id = p.loadURDF("kuka_iiwa/model.urdf",
-                                   robot_start_pos,
-                                   robot_start_ori,
-                                   useFixedBase=True)
-        #человек
-        human_start_pos = [-3.5,0,1.1]
-        human_start_ori = p.getQuaternionFromEuler([1.5,0,0])
-        self.human_id = p.loadURDF("humanoid/humanoid.urdf",
-                                   human_start_pos,
-                                   human_start_ori,
-                                   useFixedBase=True,
-                                   globalScaling=0.3)
+        # Логирование
+        self.log_message("Application started")
+
         
-        self.create_objects()
+    def setup_ui(self):
+        """Настройка элементов интерфейса"""
+        # Настройка переключения страниц
+        self.ui.ControlPageButton.setCheckable(True)
+        self.ui.SurveyPageButton.setCheckable(True)
 
-        self._init_joints()
+        self.page_button_group = QButtonGroup(self)
+        self.page_button_group.addButton(self.ui.ControlPageButton)
+        self.page_button_group.addButton(self.ui.SurveyPageButton)
+        self.page_button_group.setExclusive(True)
 
-        self.visualize_ssm_zones()
+        #Текста
+        self.ui.StatusPanel.setText(f"Status: Инициализациия...")
+        self.ui.Label_ML_status.setText(f"ML: не подключена")
+        self.ui.Label_robot_status.setText(f"Robot: не подлючен")
+        self.ui.Label_adaptive_mode.setText(f"Упрощенный режим: выкл")
+        self.ui.label_moving.setText(f"❌")
+        
+        # Подключаем переключение страниц
+        self.ui.ControlPageButton.clicked.connect(self.show_control_page)
+        self.ui.SurveyPageButton.clicked.connect(self.show_survey_page)
 
-        self.sim_thread = Thread(target=self._simulation_loop, daemon=True)
-        self.sim_thread.start()
+         # Устанавливаем начальную страницу
+        self.ui.ControlPageButton.setChecked(True)
+        self.ui.stackedWidget.setCurrentWidget(self.ui.ControlPage)
 
-        return True
+        # Настройка управления роботом
+        self.setup_robot_controls()
 
-    def create_objects(self):
-        """Create objects in the environment"""
-        cube_size = 0.05
-        cube_mass = 0.1
+        # Настройка опроса
+        self.setup_survey()
 
-        cube_positions = [
-            [0.3,0.3,0.7],
-            [-0.3,0.3,0.7],
-            [0.3, -0.3, 0.7],
-            [-0.3, -0.3, 0.7]
+        #Настройка кнопки автоматического режима (CheckBox)
+        self.ui.AutomaticModeButton.stateChanged.connect(self.on_automatic_mode_toggled)
+
+         # Настройка других кнопок (пока без функционала)
+        self.ui.HomeButton.clicked.connect(self.go_home)
+        self.ui.SavePointButton.clicked.connect(self.save_positions)
+        self.ui.pushButton_23.clicked.connect(lambda: self.log_message("Кнопка 2 нажата"))
+        self.ui.ClearProgramButtons.clicked.connect(self.clear_points)
+
+        # Настройка вывода
+        self.ui.Output.setReadOnly(True)
+        self.ui.OutputPos.setReadOnly(True)
+
+    def setup_robot_controls(self):
+        # Настройка управления роботом
+        # Маппинг кнопок на суставы (индекс сустава, направление)
+        self.joint_buttons = [
+            (self.ui.XForward, 'X', 1), (self.ui.XBackward, 'X', -1),
+            (self.ui.YForward, 'Y', 1), (self.ui.YBackward, 'Y', -1),
+            (self.ui.ZForward, 'Z', 1), (self.ui.ZBackward, 'Z', -1),
+            (self.ui.AForward, 'A', 1), (self.ui.ABackward, 'A', -1),
+            (self.ui.BForward, 'B', 1), (self.ui.BBackward, 'B', -1),
+            (self.ui.CForward, 'C', 1), (self.ui.CBackward, 'C', -1),
         ]
 
-        self.cubes = []
+        self.joint_map = ['Y', 'X', 'A', 'Z', 'B', 'C']
 
-        for pos in cube_positions:
-            cube_shape = p.createCollisionShape(p.GEOM_BOX, halfExtents=[cube_size]*3)
-            cube_visual_shape = p.createVisualShape(p.GEOM_BOX, halfExtents=[cube_size]*3, rgbaColor=[0.8,0.2,0.2,1])
-            cube_id = p.createMultiBody(cube_mass, 
-                                        cube_shape, 
-                                        cube_visual_shape, 
-                                        basePosition=pos)
-            self.cubes.append(cube_id)
-            
-    def _init_joints(self):
-        num_joints = p.getNumJoints(self.robot_id)
-        self.joint_indices=[]
-        self.joint_limits=[]
-
-        for i in range(num_joints):
-            joint_info = p.getJointInfo(self.robot_id, i)
-            if joint_info[2] == p.JOINT_REVOLUTE:
-                self.joint_indices.append(i)
-                self.joint_limits.append((joint_info[8], joint_info[9]))
-                print("Joint Name: ", joint_info[1], "Joint Type: ", joint_info[2])
-
-        self.joint_indices = self.joint_indices[:6]
-        self.joint_limits = self.joint_limits[:6]
-
-
-        logger.info(f"Robot initialized with {len(self.joint_indices)} joints")
-        logger.info(f"Joint limits: {self.joint_limits}")
+        for button, joint_name, direction in self.joint_buttons:
+            # Настраиваем автоповтор для непрерывного движения при удержании
+            button.setAutoRepeat(True)
+            button.setAutoRepeatDelay(500)
+            button.setAutoRepeatInterval(100)
+            joint_index = self.joint_map.index(joint_name)
+            button.clicked.connect(
+                lambda checked, j=joint_index, d=direction: self.move_joint(j, d), 
+            )
     
-    def _simulation_loop(self):
-        while self.is_running:
+    def setup_survey(self):
+        # Настройка опроса
+        # группа кнопок
+        self.radio_button = [
+            self.ui.radioButton, self.ui.radioButton_2, self.ui.radioButton_3,
+            self.ui.radioButton_4, self.ui.radioButton_5, self.ui.radioButton_6,
+            self.ui.radioButton_7, self.ui.radioButton_8, self.ui.radioButton_9,
+            self.ui.radioButton_10
+        ]
 
-            p.stepSimulation()
-            self._update_positions()
-            self._check_human_position()
-            time.sleep(1/240)
-    
-    def _update_positions(self):
-        for i, joint_idx in enumerate(self.joint_indices):
-            joint_state = p.getJointState(self.robot_id, joint_idx)
-            self.current_positions[i] = joint_state[0]
-        self.end_effector_link_state = p.getLinkState(self.robot_id, self.end_effector_link_index)
-        self.current_FramePos = list(self.end_effector_link_state[0])
-        self.current_orientation = list(self.end_effector_link_state[1])
+        # Создаем группу для радио-кнопок
+        self.survey_group = QButtonGroup(self)
+        for i, btn in enumerate(self.radio_button, 1):
+            self.survey_group.addButton(btn, i)
+
+        # Кнопка отправки опроса
+        self.ui.SentAnswer.clicked.connect(self.submit_survey)
+
+    def setup_timers(self):
+        # Таймеры
+        self.timer = QTimer(self)
+        self.timer.timeout.connect(self.update_time)
+        self.timer.start(100)
+
+        # Таймеры для автоматисческого опроса(каждые 30 минут)
+        self.survey_timer = QTimer()
+        self.survey_timer.timeout.connect(self.show_survey_notification)
+        self.survey_timer.start(1800000)  # 30 минут
+
+        # Таймеры для проверки адаптации ML
+        self.ml_check_timer = QTimer()
+        self.ml_check_timer.timeout.connect(self.check_ml_adaptation)
+        self.ml_check_timer.start(60000)  # Каждую минуту
+
+    def connect_to_servers(self):
+        # Подключаемся к серверам
+        # ЗАпускаем в отдельных потоках
+        self.robot_thread = self.robot_client.run_in_thread()
+        self.ml_thread = self.ml_client.run_in_thread() 
+
+    @Slot()
+    def show_control_page(self):
+        self.ui.stackedWidget.setCurrentWidget(self.ui.ControlPage)
+
+    @Slot()
+    def show_survey_page(self):
+        self.ui.stackedWidget.setCurrentWidget(self.ui.SurvayPage)
+
+    @Slot()
+    def move_joint(self,joint_index, direction):
+        if hasattr(self, 'robot_client') and self.robot_client.running:
+            self.robot_client.send_command('move_joint', joint=joint_index, direction=direction, step=0.1)
+
+        # Логируем действие
+        self.db.log_command(
+            source='main_app',
+            command=f'move_joint_{joint_index}',
+            parameters=f'direction={direction}',
+            success=True
+        )
         
-    def visualize_ssm_zones(self):
-        for key in self.zone_visuals:
-            if self.zone_visuals[key] is not None:
-                p.removeBody(self.zone_visuals[key])
-                self.zone_visuals[key] = None
-                
-        # Получаем позицию базы робота
-        robot_pos,_= p.getBasePositionAndOrientation(self.robot_id)
-        zones = self.ssm_zones[self.current_ssm_mode]
+    @Slot()
+    def go_home(self):
+        if hasattr(self, 'robot_client') and self.robot_client.running:
+            self.robot_client.send_command('reset_positions')
 
+        # Логируем действие
+        self.db.log_command(
+            source='main_app',
+            command='reset_positions',
+            parameters="",
+            success=True
+        )
 
-        if self.current_ssm_mode == 'normal':
-            inner_color=[1,1,0,0.18] # Желеный, полупрозрачный]
-            outer_color=[0,1,0,0.18] # Зеленый, полупрозрачный
-            inner_radius = zones['inner']
-            outer_radius = zones['outer']
+        self.ui.Code.append(f"Reset positions")
+
+    @Slot()
+    def save_positions(self):
+        if hasattr(self, 'robot_client') and self.robot_client.running:
+           self.ui.Code.append(f"Save position {["%.2f" % framepos for framepos in self.current_frame_pos_robot]}")
+           self.points_robot.append(self.current_frame_pos_robot)
+           self.orientation_robot.append(self.current_orientation_robot)
+        
+        self.db.log_command(
+            source='main_app',
+            command='Save_positions',
+            parameters=f"positions={self.current_frame_pos_robot, self.current_orientation_robot}",
+            success=True
+        )
+    
+    @Slot(int)
+    def on_automatic_mode_toggled(self, state):
+        if self.ui.AutomaticModeButton.isChecked():
+            self.start_automatic_mode()
+            self.db.log_command(
+                source='main_app',
+                command='start_automatic_mode',
+                parameters="",
+                success=True
+            )
         else:
-            inner_color=[1,0,1,0.10] # Финий, полупрозрачный]
-            outer_color=[0,0,1,0.10] # Сиолетовый, полупрозрачный
-            inner_radius = zones['inner']
-            outer_radius = zones['outer']
+            self.stop_automatic_mode()
+            self.db.log_command(
+                source='main_app',
+                command='stop_automatic_mode',
+                parameters="",
+                success=True
+            )
 
-        inner_visual_shape =  p.createVisualShape(
-            p.GEOM_SPHERE, 
-            radius=inner_radius, 
-            rgbaColor=inner_color
+    @Slot()
+    def submit_survey(self):
+        select_id = self.survey_group.checkedId()
+
+        if select_id == -1:
+            QMessageBox.warning(
+                self,
+                "Error",
+                "Please answer all questions"
             ) 
-        inner_collision_shape = p.createCollisionShape(
-            p.GEOM_SPHERE, 
-            radius=inner_radius
-            )
-        self.zone_visuals['inner'] = p.createMultiBody(
-            0,
-            inner_collision_shape,
-            inner_visual_shape,
-            basePosition=robot_pos
-        )
-        p.setCollisionFilterGroupMask(self.zone_visuals['inner'],-1,0,0)
-        p.changeVisualShape(self.zone_visuals['inner'],-1,rgbaColor=inner_color)
+        
+        # Сохраняем опрос в базу данных
+        fatigue_level = select_id 
+        self.db.save_survey(fatigue_level)
 
-        outer_visual_shape =  p.createVisualShape(
-            p.GEOM_SPHERE,
-            radius=outer_radius,
-            rgbaColor=outer_color
-        )
-        outer_collision_shape = p.createCollisionShape(
-            p.GEOM_SPHERE,
-            radius=outer_radius
-        )
-        self.zone_visuals['outer'] = p.createMultiBody(
-            0,
-            outer_collision_shape,
-            outer_visual_shape,
-            basePosition=robot_pos
-        )
-        p.setCollisionFilterGroupMask(self.zone_visuals['outer'],-1,0,0)
-        p.changeVisualShape(self.zone_visuals['outer'],-1,rgbaColor=outer_color)
-        
-        logger.info(f"SSM zones visualized: mode={self.current_ssm_mode}, inner={inner_radius}, outer={outer_radius}")
-        
-        
-    async def set_adaptive_mode(self, adaptive_mode, speed_mode_type):
-        if adaptive_mode:
-            ssm_zone_type = 'restricted'
+        # Обновляем состояние
+        self.current_fatigue_level = fatigue_level
+        self.survey_answered = True
+
+        self.log_message(f"Answered survey: {fatigue_level}")
+
+        # Сбрасываем выбор
+        self.survey_group.setExclusive(False)
+        checked_button = self.survey_group.checkedButton()
+        if checked_button:
+            checked_button.setChecked(False)
+        self.survey_group.setExclusive(True)
+
+        # Обновляем интервал опроса
+        self.update_survey_interval()
+
+        # переключаемся на страницу управления
+        self.ui.ControlPageButton.click()
+
+    def update_survey_interval(self):
+        """Обновление интервала опроса на основе количества данных"""
+        training_data=self.db.get_training_data()
+        count=len(training_data)
+        if count<1440:
+            interval= 30*60*1000 # 30 минут
+        elif count<=2880:
+            interval= 60*60*1000 # 1 час
         else:
-            ssm_zone_type = 'normal'
-        if ssm_zone_type in self.ssm_zones.keys():
-            self.current_ssm_mode = ssm_zone_type
-            self.visualize_ssm_zones()
-            logger.info(f"Workspace changed to {ssm_zone_type}")
-            self.current_speed_mode = speed_mode_type
-            return True
-        return False
+            interval= 120*60*1000 # 2 часа
+
+        self.survey_timer.setInterval(interval)
+        self.log_message(f"Updated survey interval to {interval}")
     
-    def _check_human_position(self):
-        #Проверка расстояния между роботом и человеком
-        if not self.human_id:
-            return 
-        
-        robot_pos,_= p.getBasePositionAndOrientation(self.robot_id)
-        human_body_pos,_ = p.getBasePositionAndOrientation(self.human_id)
 
-        dx = human_body_pos[0] - robot_pos[0]
-        dy = human_body_pos[1] - robot_pos[1]
-        dz = human_body_pos[2] - robot_pos[2] # игнорируем
-        distance = math.sqrt(dx*dx + dy*dy)
+    @Slot()
+    def show_survey_notification(self):
+        #Показать уведомление об опросе
+        QMessageBox().information(self, "Опрос", "Пожалуйста, ответьте на опрос!")
+        self.ui.SurveyPageButton.click()
+        self.log_message("Show survey notification")
 
-        old_mode = self.current_ssm_mode
-        old_speed_mode = self.current_speed_mode
-
-        if distance < self.ssm_zones[self.current_ssm_mode]['outer'] and distance > self.ssm_zones[self.current_ssm_mode]['inner']:
-            #человек внутри зеленой зоны - полная рабочая скорость
-            self.current_speed_mode = 'full'
-        elif distance < self.ssm_zones[self.current_ssm_mode]['inner']:
-            #человек внутри желтой зоны - половина рабочей скорости
-            self.current_speed_mode = 'reduced'
-        elif distance > self.ssm_zones[self.current_ssm_mode]['outer']:
-            # человек вне зон
-            self.current_speed_mode = 'full'
-        # else человек у робота
-
-        self.automatic_move_speed = self.robot_speeds['automatic'][self.current_speed_mode]
-        self.manual_move_speed = self.robot_speeds['manual'][self.current_speed_mode]
-
-        if old_speed_mode != self.current_speed_mode:
-            logger.info(f"Speed mode changed to {self.current_speed_mode}")
-        if old_mode != self.current_ssm_mode:
-            logger.info(f"SSM mode changed to {self.current_ssm_mode}")
-
+    @Slot()
+    def check_ml_adaptation(self):
+        # Проверяем адаптацию ML
+        if hasattr(self, 'ml_client') and self.ml_client.running:
+            self.ml_client.get_prediction()
     
-    def move_joint(self, joint_index, direction, step=0.1):
-        if 0 <= joint_index < len(self.joint_indices):
-            # проверяем не выдет ли ноовое положение за пределы рабочей зоны
-            current_pos = p.getJointState(self.robot_id, self.joint_indices[joint_index])[0]
-            new_pos = current_pos + (direction * step)
+    @Slot(dict)
+    def on_robot_positions(self,positions):
+        # Обновляем позиции робота
+        self.current_frame_pos_robot=positions.get('FramePositions')
+        self.current_orientation_robot=positions.get('End_effector_Orientation')
+        text=""
+        self.current_joint_positions=positions.get('JointPositions')
+        for i, pos in enumerate(self.current_joint_positions):
+            text += f"Joint {i}: {pos:.2f}\n"
+        text += f"Frame Position: {["%.2f" % framepos for framepos in self.current_frame_pos_robot]}"
+        self.ui.OutputPos.setPlainText(text)
+        if self.last_positions and any(abs(c-l) > 0.01 for c,l in zip(self.current_joint_positions,self.last_positions)):
+            self.ui.label_moving.setText(f"✅")
+        else:
+            self.ui.label_moving.setText(f"❌")
+        self.last_positions= self.current_joint_positions
+        
 
-            # Проверяем пределы сустава
-            lower, upper = self.joint_limits[joint_index]
-            new_pos = max(lower, min(new_pos, upper))
-
-            p.setJointMotorControl2(
-                self.robot_id,
-                self.joint_indices[joint_index],
-                p.POSITION_CONTROL,
-                targetPosition=new_pos,
-                force=800,
-                maxVelocity=self.manual_move_speed
+    @Slot()
+    def start_automatic_mode(self):
+        if not self.points_robot:
+            QMessageBox.warning(
+                self,
+                "Error",
+                "Please save positions first"
             )
-            return True, f"Joint {joint_index} moved to {new_pos:.3f}"
-        return False, f"Invalid joint index: {joint_index}"
+            self.ui.AutomaticModeButton.setChecked(False)
+            return
+
+        if hasattr(self, 'robot_client') and self.robot_client.running:
+            self.robot_client.send_command(
+                command = 'start_automatic_mode',
+                points = self.points_robot,
+                orientations = self.orientation_robot,
+                loop_programming = True
+                )
+            self.ui.Code.clear()
+            for i,points in enumerate(self.points_robot): 
+                self.ui.Code.append(f"Point {i}: {points}\n")
+            self.automatic_mode_active = True
+            self.log_message("Automatic mode started")
+            self.set_manual_controls_enabled(False)
     
-    def get_joint_positions(self):
-        positions_deg = [pos * 180 / np.pi for pos in self.current_positions]
-        return {
-                'JointPositions': positions_deg,
-                'FramePositions':self.current_FramePos,
-                'End_effector_Orientation':self.current_orientation,
-                'velosity': self.automatic_move_speed if self.automatic_mode else self.manual_move_speed
-                }
-
-    def reset_positions(self):
-        for i, joint_idx in enumerate(self.joint_indices):
-            p.setJointMotorControl2(
-                self.robot_id,
-                joint_idx,
-                p.POSITION_CONTROL,
-                targetPosition=0.0,
-                force=800,
-                maxVelocity=self.automatic_move_speed
-            )
-
-    def calculate_inverse_kinematics(self, target_position, target_orientation): #target_orientation=None):
-        try:
-            
-            joint_positions = p.calculateInverseKinematics(
-                self.robot_id,
-                self.end_effector_link_index,
-                target_position,
-                targetOrientation=target_orientation,
-                lowerLimits=[lim[0] for lim in self.joint_limits],
-                upperLimits=[lim[1] for lim in self.joint_limits],
-                jointRanges=[lim[1] - lim[0] for lim in self.joint_limits],
-                restPoses = [0.0, -0.5, 0.0, 1.0, 0.0, 0.0],
-                maxNumIterations=self.max_ik_iterations,
-                residualThreshold=self.ik_tolerance
-            )
-
-            result = list(joint_positions[:len(self.joint_indices)])
-            for i, angle in enumerate(result):
-                lower,upper = self.joint_limits[i]
-                result[i] = max(lower, min(angle, upper))
-            
-            logger.info(f"Calculated joint positions successfully")
-            return result
-        except Exception as e:
-            logger.error(f"Error calculating inverse kinematics: {e}")
-            return None
-        
-    def move_to_point_ik(self, target_position,target_orientation):
-        try:
-
-            joint_angles = self.calculate_inverse_kinematics(target_position, target_orientation)
-            if joint_angles is None:
-                return False, "Failed to calculate inverse kinematics"
-
-            for i, joint_idx in enumerate(self.joint_indices):
-                    p.setJointMotorControl2(
-                        self.robot_id,
-                        joint_idx,
-                        p.POSITION_CONTROL,
-                        targetPosition=joint_angles[i],
-                        force=800,
-                        maxVelocity=self.automatic_move_speed
-                    )
-            start_time = time.time()
-            timeout = 10.0
-            position_tolerance = 0.03
-            #orientation_tolerance = 0.1
-        
-            while time.time() - start_time < timeout:
-                p.stepSimulation()
-                
-                current_state = p.getLinkState(self.robot_id, self.end_effector_link_index, computeForwardKinematics=True)
-                current_position = current_state[0]
-                current_orientation = current_state[1]
-                position_distance = np.linalg.norm(np.array(current_position) - np.array(target_position))
-                
-                # Считаем, что кватернионы уже нормализованы
-                #dot_product = np.abs(np.dot(current_orientation, target_orientation))
-                # Угол = 2 * arccos(dot_product), но для близости можно сравнивать dot_product с порогом
-                #orientation_ok = dot_product > np.cos(orientation_tolerance/2)
-
-                if position_distance < position_tolerance: #and orientation_ok: # Допуск 
-                    logger.info(f"Move to point IK completed in {time.time() - start_time:.3f} seconds")
-                    logger.debug(f"Point completed, distance: {position_distance:.3f}")
-                    return True, f"Point {target_position} completed"
-                time.sleep(0.05)
-            return False, f"Move to point IK timed out after {timeout} seconds"
-        
-        except Exception as e:
-            logger.error(f"Error moving to point with IK: {e}")
-            return False, str(e)
-
-    def start_automatic_mode(self,points,orientation,loop_programming = True):
-        with self.automatic_lock:
-            if self.automatic_mode:
-                return False
-            
-            if not points:
-                return False, "No points provided"
-            
-            self.target_points = points
-            self.target_orientations = orientation
-            self.current_point_index = 0
-            self.loop_enabled = loop_programming
-            self.automatic_mode = True
-
-            self.automatic_thread = Thread(target=self._automatic_mode_loop, daemon=True)
-            self.automatic_thread.start()
-
-            logger.info(f"Automatic mode started. Points: {len(self.target_points)}")
-            return f'Automatic mode started. Points: {len(self.target_points)}'
-        
+    @Slot()
     def stop_automatic_mode(self):
-        with self.automatic_lock:
-            if not self.automatic_mode:
-                return
-            self.automatic_mode = False
-            logger.info("Automatic mode stopped")
-        return f'Automatic mode stopped'
+        if hasattr(self, 'robot_client') and self.robot_client.running:
+            self.robot_client.send_command(command='stop_automatic_mode')
+            self.automatic_mode_active = False
+            self.log_message("Automatic mode stopped")
+            self.set_manual_controls_enabled(True)
     
-    def _automatic_mode_loop(self):
-        #Цикл автоматического управления
-        logger.info("Automatic mode loop started")
-        while self.automatic_mode and self.is_running:
-            try:
-                with self.automatic_lock:
-                    if not self.target_points or self.current_point_index >= len(self.target_points):
+    def set_manual_controls_enabled(self, enabled):
+        for buttons, _, _ in self.joint_buttons:
+            buttons.setEnabled(enabled)
+        self.ui.HomeButton.setEnabled(enabled)
+        self.ui.SavePointButton.setEnabled(enabled)
 
-                        if self.loop_enabled:
-                            self.current_point_index = 0
-                            logger.info("Looping to the first point")
+    @Slot()
+    def clear_points(self):
+        self.points_robot = []
+        self.db.log_command(
+            source='main_app',
+            command='clear_points',
+            parameters="",
+            success=True
+        )
+        self.log_message("Points cleared")
+        self.ui.Code.clear()
+        self.ui.Code.append("Points cleared")
 
-                        else:
-                            self.automatic_mode = False
-                            logger.info("Automatic mode stopped")
-                            break
-                    
-                    # получаем текущую точку
-                    target_point = self.target_points[self.current_point_index]
-                    target_orientation = self.target_orientations[self.current_point_index]
+    def on_robot_error(self, error):
+        self.log_message(f"Robot error: {error}")
 
-                    # Преобразуем в массив
-                    if isinstance(target_point, list):
-                        target_point = np.array(target_point, dtype=np.float32)
+    def on_robot_connect(self):
+        self.ui.Label_robot_status.setText(f"Robot подключен")
+        self.log_message("Robot connected")
 
-                    point_num = self.current_point_index + 1
-                    total_points = len(self.target_points)
-                    logger.info(f"Moving to point {point_num}/{total_points} ({target_point})")
-                    
-                    success, message = self.move_to_point_ik(target_point, target_orientation)
-                    if success:
-                        self.current_point_index += 1
-                        logger.info(f"Point {target_point} completed")
-                        time.sleep(0.5)
-                    else:
-                        logger.warning(f"Failed to move to point {target_point}: {message}")
-                        self.current_point_index += 1
-                        time.sleep(1)
+    def on_robot_disconnect(self):
+        self.ui.Label_robot_status.setText(f"Robot отключен")
+        self.log_message("Robot disconnected")
+    
+    def on_ml_prediction(self, prediction):
+        requires_adaptation = prediction.get('requires_adaptation', False)
+        confidencce= prediction.get('confidence', 0.0)
 
-            except Exception as e:
-                logger.error(f"Error in automatic mode loop: {e}")
+        self.log_message(f"ML prediction: requires_adaptation={requires_adaptation}, confidence={confidencce}")
 
-    logger.info("Automatic mode loop stopped")
+        if requires_adaptation and not self.adaptive_mode:
+            self.enable_adaptive_mode()
+        elif not requires_adaptation and self.adaptive_mode:
+            self.disable_adaptive_mode()
+    
+    def on_ml_error(self, error):
+        self.log_message(f"ML error: {error}")
+    
+    def on_ml_connect(self):
+        self.ui.Label_ML_status.setText(F"ML подключена")
+        self.log_message("ML connected")
+    
+    def on_ml_disconnect(self):
+        self.ui.Label_ML_status.setText(F"ML отключена")
+        self.log_message("ML disconnected")
+
+    def enable_adaptive_mode(self):
+        self.adaptive_mode = True
+        self.log_message("Adaptive mode enabled")
+        self.ui.Label_adaptive_mode.setText(f"Адаптивный режим вкл")
+
+        self.adaptation.apply_simple_style(self.ui)
+
+        #Отправляем команду адаптацию робота
+        if hasattr(self, 'robot_client') and self.robot_client.running:
+            self.robot_client.send_command('set_adaptive_mode',enabled=True)
+    
+    def disable_adaptive_mode(self):
+        self.adaptive_mode = False
+        self.log_message("Adaptive mode disabled")
+        self.ui.Label_adaptive_mode.setText(f"Адаптивный режим выкл")
+        self.adaptation.apply_normal_style(self.ui)
+        #Отправляем команду на возврат к обычному режиму робота
+        if hasattr(self, 'robot_client') and self.robot_client.running:
+            self.robot_client.send_command('set_adaptive_mode', enabled=False)
+
+    
+    @Slot()
+    def update_time(self):
+        current_time = now().strftime( "%H:%M:%S")
+        self.ui.TimeLabel.setText(current_time)
+        if not hasattr(self, '_last_time') or self._last_time != current_time:
+            self.ui.TimeLabel.setText(current_time)
+            self._last_time = current_time
+
+    def log_message(self, message):
+        #Логирование сообщений в интерфейс
+        timestamp = now().strftime("%H:%M:%S")
+        self.ui.Output.append(f"[{timestamp }] {message}")
+
+    def closeEvent(self,event):
+        self.log_message("Application closed")
+
+        if hasattr(self, 'robot_client'):
+            self.robot_client.stop()
+        if hasattr(self, 'ml_client'):
+            self.ml_client.stop()
         
-    def disconnect(self):
-        self.is_running = False
-        # Останавливаем автоматический режим
-        self.stop_automatic_mode()
+        if hasattr(self, 'db'):
+            self.db.close()
 
-        #Ждем завершения потоков
-        if hasattr(self, 'automatic_thread') and self.automatic_thread:
-            self.automatic_thread.join(timeout=1.0)
+        event.accept()
 
-        if hasattr(self, 'sim_thread') and self.sim_thread:
-            self.sim_thread.join(timeout=1.0)
-        if self.physics_client is not None:
-            p.disconnect()
+def main():
+    app = QApplication(sys.argv)
+    window = MainWindow()
+    window.show()
+    sys.exit(app.exec())
 
 if __name__ == "__main__":
-    robot = KukaRobot(gui=True)
-    robot.connect()
-    try:
-        while True:
-            time.sleep(1)
-    except KeyboardInterrupt:
-        robot.disconnect()
-                        
+    main()
+time_controller:
+# time_controller.py
+"""
+Глобальный контроллер времени для всего проекта.
+Все модули импортируют отсюда время вместо datetime.now()
+"""
 
-server_pybullet:
-import asyncio
-import websockets
-import json
+import threading
+import datetime as dt
 import time
-from threading import Thread
-import logging
-from main_simulation import KukaRobot
-from database import Database
+from typing import Optional
 
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
 
-class PybulletServer:
-    def __init__(self, host="localhost", port=8765):
-        self.host = host
-        self.port = port
-        self.robot = KukaRobot(gui=True)
-        self.robot.connect()
-        self.db = Database()
-        self.adaptive_mode = False
-        self.clients = set()
+class GlobalTimeController:
+    """Глобальный менеджер времени с ускорением"""
 
-    async def register(self,websocket):
-        self.clients.add(websocket)
-        print(f"New client: {websocket.remote_address}")
-    
-    async def unregister(self,websocket):
-        self.clients.remove(websocket)
-        print(f"Client disconnected: {websocket.remote_address}")
+    _instance: Optional['GlobalTimeController'] = None
+    _current_time: dt.datetime
+    _acceleration: float = 1.0  # 1x = реальное время
+    _running: bool = False
+    _thread: Optional[threading.Thread] = None
+    _lock: threading.Lock
+    _update_event: threading.Event
 
-    
-    async def broadcast_positions(self):
-        """Передает текущие позиции суставов"""
-        while True:
-            try:
-                positions = self.robot.get_joint_positions()
-                message = {
-                    'type': 'positions',
-                    'JointPositions': positions.get('JointPositions'),
-                    'FramePositions': positions.get('FramePositions'),
-                    'End_effector_Orientation': positions.get('End_effector_Orientation'),
-                    'timestamp': time.time(),
-                    'adaptive_mode': self.adaptive_mode,
-                    'speed_factor': positions.get('velosity')
-                }
+    def __new__(cls):
+        if cls._instance is None:
+            cls._instance = super().__new__(cls)
+            cls._instance._current_time = dt.datetime.now()
+            cls._instance._lock = threading.Lock()
+            cls._instance._update_event = threading.Event()
+        return cls._instance
+
+    def start(self):
+        """Запустить поток с временем (вызывается автоматически)"""
+        if not self._running:
+            self._running = True
+            self._thread = threading.Thread(target=self._time_loop, daemon=False)
+            self._thread.start()
+            print("GlobalTimeController started")
+
+    def _time_loop(self):
+        """Основной цикл времени (выполняется в отдельном потоке)"""
+        last_real=time.time()
+        update_counter = 0
+        while self._running:
+            # Спим недолго, чтобы время обновлялось плавно
+            time.sleep(0.1)
+
+            # Получаем текущее время ДО блокировки
+            current_real = time.time()
+            real_delta = current_real - last_real
+            
+            # Обновляем last_real ДО блокировки (важно!)
+            last_real = current_real
+            
+            # Теперь захватываем блокировку только для обновления _current_time
+            with self._lock:
+                virtual_delta = real_delta * self._acceleration
+                self._current_time += dt.timedelta(seconds=virtual_delta)
+                update_counter += 1
                 
+                # Каждую секунду устанавливаем событие
+                if update_counter % 10 == 0:
+                    self._update_event.set()
 
-                self.db.save_telemetry(
-                    positions=f'joint_positions:{positions.get('JointPositions')}, frame_positions:{positions.get("FramePositions")}, end_effector_orientation:{positions.get("End_effector_Orientation")}',
-                    velocity=positions.get('velosity'),
-                    adaptive_mode=self.adaptive_mode
-                )
-                try:
-                    await asyncio.gather(
-                        *[asyncio.create_task(client.send(json.dumps(message))) for client in self.clients]
-                    )
-                    
-                except Exception as e:
-                    logger.error(f"Error while broadcasting positions: {e}")
-                    
-                await asyncio.sleep(0.1)
-            except Exception as e:
-                logger.error(f"Error while broadcasting positions: {e}")
-                break
+    def now(self) -> dt.datetime:
+        """Текущее виртуальное время (замена datetime.now)"""
+        return self._current_time
 
-    async def handle_client(self,websocket):
-        await self.register(websocket)
-        client_address = websocket.remote_address
-        logger.info(f"Client connected: {client_address}")
-        try:
-            async for message in websocket:
-                await self.process_message(websocket,message)
-        except Exception as e:
-            logger.error(f"Error while handling client: {e}")
-        except websockets.exceptions.ConnectionClosed:
-            logger.info(f"Client disconnected: {client_address}")
+    def configure(self, start_time: dt.datetime, acceleration: float = 1.0):
+        """Настроить виртуальное время"""
+        with self._lock:
+            self._current_time = start_time
+            self._acceleration = acceleration
 
-    async def process_message(self,websocket,message):
-        try:
-            data = json.loads(message)
-            command = data.get('command')
-            
-            self.db.log_command(
-                "response_pybullet_server", 
-                command, 
-                json.dumps(data), 
-                True
-            )
-            response=None
-            
-            if command == 'move_joint':
-                joint = data.get('joint')
-                direction = data.get('direction')
-                step = data.get('step', 0.1)
-                success,log_msg = self.robot.move_joint(joint,direction,step)
 
-                response={
-                    'type': 'command_response',
-                    'command':'move_joint',
-                    'success': success,
-                    'message': log_msg,
-                    'timestamp': time.time()
-                }
+    def jump_to(self, new_time: dt.datetime):
+        """Скачкообразно перейти к указанному времени"""
+        with self._lock:
+            self._current_time = new_time
+        
 
-            elif command == 'reset_positions':
-                self.robot.reset_positions()
-                response={
-                    'type': 'command_response',
-                    'command':'reset_positions',
-                    'success': True,
-                    'message': 'Positions have been reset',
-                    'timestamp': time.time()
-                }
-            
-            elif command == 'start_automatic_mode':
-                points = data.get('points')
-                loop = data.get('loop_programming', False)
-                orientations = data.get('orientations', None)
-                success,log_msg = self.robot.start_automatic_mode(points, orientations, loop)
-                response={
-                    'type': 'command_response',
-                    'command':'start_automatic',
-                    'success': success,
-                    'message': log_msg,
-                    'point_count': len(points),
-                    'timestamp': time.time()
-                }
-            
-            elif command == 'stop_automatic_mode':
-                success,log_msg = self.robot.stop_automatic_mode()
-                response={
-                    'type': 'command_response',
-                    'command':'stop_automatic',
-                    'success': success,
-                    'message': log_msg,
-                    'timestamp': time.time()
-                }
-                
-            elif command == 'set_adaptive_mode':
-                self.adaptive_mode = data.get('enabled', False)
-                self.robot.set_adaptive_mode(self.adaptive_mode, 'reduced' if self.adaptive_mode else 'full')
-                response={
-                    'type': 'command_response',
-                    'command':'set_adaptive_mode',
-                    'success': True,
-                    'message': 'Adaptive mode has been set',
-                    'adaptive_mode': self.adaptive_mode,
-                    'timestamp': time.time()
-                }
-                
-                logger.info(f"Adaptive mode: {self.adaptive_mode}, Speed mode: {self.speed_mode}")
-                
-                
-            else:
-                response={
-                    'type': 'error',
-                    'message': 'Unknown command',
-                    'timestamp': time.time()
-                }
-            
-            await websocket.send(json.dumps(response))
-                
-            
-            logger.info(f"Sedding response: {response}")
-            self.db.log_command(
-                "send_pybullet_server",
-                response.get('command'), 
-                json.dumps(response), 
-                True
-            )
-            
-        except json.JSONDecodeError:
-            await websocket.send(json.dumps({
-                'type': 'error',
-                'message': 'Invalid JSON format'
-            }))
-        except Exception as e:
-            await websocket.send(json.dumps({
-                'type': 'error',
-                'message': str(e)
-            }))
-
-    
-    async def start_server(self):
-        async with websockets.serve(self.handle_client, self.host, self.port):
-            logger.info(f"Server started on {self.host}:{self.port}")
-            
-            self.broadcast_task = asyncio.create_task(self.broadcast_positions())
-            await asyncio.Future()
-
-    def run(self):
-        asyncio.run(self.start_server())
-
-    def run_in_thread(self):
-        thread = Thread(target=self.run , daemon=True)
-        thread.start()
-        return thread
+    def fast_forward(self, hours: float = 0, minutes: float = 0):
+        """Быстрая перемотка вперёд"""
+        delta = dt.timedelta(hours=hours, minutes=minutes)
+        with self._lock:
+            self._current_time += delta
+       
 
     def stop(self):
-        """Остановка сервера"""
-        logger.info("Остановка сервера PyBullet...")
-        self.running = False
-        self.db.close()
-        if self.broadcast_task and not self.broadcast_task.done():
-            self.broadcast_task.cancel()
-        
-        if hasattr(self, 'robot') and self.robot:
-            self.robot.disconnect()
+        """Остановить течение времени"""
+        self._running = False
+        if self._thread:
+            self._thread.join(timeout=1.0)
+        print("GlobalTimeController stopped")
     
-if __name__ == "__main__":
-    server = PybulletServer()
-    
-    try:
-    # Запускаем сервер в отдельном потоке
-        server_thread = server.run_in_thread()
-    
-        # Основной поток ждет завершения
-        while True:
-            time.sleep(1)
-        
-    except KeyboardInterrupt:
-        logger.info("Получен сигнал KeyboardInterrupt")
-        server.stop()
+    @property
+    def acceleration(self):
+        return self._acceleration
+
+
+# Глобальный экземпляр для импорта
+time_controller = GlobalTimeController()
+
+
+# Удобные функции для импорта
+def now() -> dt.datetime:
+    """Использовать вместо datetime.now() во всём проекте"""
+    return time_controller.now()
+
+
+def today() -> dt.date:
+    """Использовать вместо datetime.today()"""
+    return time_controller.now().date()

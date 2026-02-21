@@ -7,6 +7,8 @@ import logging
 from main_simulation import KukaRobot
 from database import Database
 
+from time_controller import now
+
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
@@ -40,6 +42,7 @@ class PybulletServer:
                     'FramePositions': positions.get('FramePositions'),
                     'End_effector_Orientation': positions.get('End_effector_Orientation'),
                     'timestamp': time.time(),
+                    'virtual_time': now().isoformat(),
                     'adaptive_mode': self.adaptive_mode,
                     'speed_factor': positions.get('velosity')
                 }
@@ -114,8 +117,8 @@ class PybulletServer:
             
             elif command == 'start_automatic_mode':
                 points = data.get('points')
-                loop = data.get('loop_programming', False)
                 orientations = data.get('orientations', None)
+                loop = data.get('loop_programming', False)
                 success,log_msg = self.robot.start_automatic_mode(points, orientations, loop)
                 response={
                     'type': 'command_response',
