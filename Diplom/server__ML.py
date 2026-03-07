@@ -3,11 +3,11 @@ import websockets
 from websockets.asyncio.server import serve
 import json
 import signal
-from ml_model import FatiguePredictor
-from database import Database
 import logging
 import numpy as np
 
+from ml_model import FatiguePredictor
+from database import Database
 from time_controller import now
 
 logging.basicConfig(level=logging.INFO)
@@ -33,7 +33,7 @@ class MLServer:
                 try:
                     data = json.loads(message)
                     command = data.get('command')
-                    logger.info(f"ML resived: {data}")
+                    logger.info(f"ML resived time:{now()} data: {data}")
 
                     if command == 'predict':
                         timestamp_str = data.get('timestamp')
@@ -46,11 +46,7 @@ class MLServer:
                         else:
                             timestamp = now()
                          
-
-                        hour = timestamp.hour
-                        day_of_week = timestamp.weekday
-
-                        prediction, confidence  = self.model.predict([[hour, day_of_week]])
+                        prediction, confidence  = self.model.predict(timestamp)
                         
                         response = {
                             'type': 'prediction',
@@ -71,12 +67,12 @@ class MLServer:
 
                         await websocket.send(json.dumps(response))
                         logger.info(f"ML send: {response}")
-                    
+                        """
                     elif command == 'retrain':
                         # Запрос на дообучение модели
 
-                        X_data = data.get('X', [])
-                        y_data = data.get('y', [])
+                        X_data = data.get('X')
+                        y_data = data.get('y')
 
                         if X_data and y_data:
                             X = np.array(X_data)
@@ -88,6 +84,7 @@ class MLServer:
                                 'accuracy': float(accuracy),
                                 'message': 'Model retrained successfully.'
                             }
+                        
 
                         else:
                             response = {
@@ -96,6 +93,7 @@ class MLServer:
                             }
 
                         await websocket.send(json.dumps(response))
+                        """
 
                     else:
                         response = {
@@ -116,11 +114,41 @@ class MLServer:
                             }))
         except websockets.exceptions.ConnectionClosed:
             logger.info(f"ML client disconnected: {client_address}")
+
+    async def periodic_model_update(self):
+        """Переобучение каждые 5 минут"""
+        while self.running:
+            await self.wait_virtual(300) # 5 минут
+            try:
+                rows = self.db.get_training_data(limit=500)
+                if len(rows)<10:
+                    continue
+                X,y = [],[]
+                for row in rows:
+                    timestamp_str = row['timestamp']
+                    try:
+                        from datetime import datetime
+                        timestamp = datetime.fromisoformat(timestamp_str)
+                    except:
+                        continue
+                    X.append(self.model.extract_features(timestamp))
+                    fatigue_level = row['fatigue_level']
+                    concentration_level = row['concentration_level']
+                    # Цель: устал если усталость >=6 и концентрация <=4
+                    target = 1 if (fatigue_level >= 6 and concentration_level <= 4) else 0
+                    y.append(target)
+                
+                if len(X)>0:
+                    X = np.array(X)
+                    y = np.array(y)
+                    self.model.train(X, y)
+                    logger.info('Predictor model updated complete')
+            except Exception as e:
+                logger.error(f"Failed to update model: {e}")
     
     async def start(self):
         # Запускаем сервер
         self.running = True
-
         async with serve(self.handle_client, self.host, self.port) as server:
 
         # Запускаем периодическую задачу обновления модели
@@ -128,27 +156,12 @@ class MLServer:
             self.server = server
         # Ждем завершения
             await server.serve_forever()
-
-    async def periodic_model_update(self):
-        while self.running:
-            try: 
-                # Каждые 5 минут пытаемся дообучить модель
-                await asyncio.sleep(300)
-                
-                training_data = self.db.get_training_data()
-                if len(training_data)> 20:  # Минимум 10 записей
-                    X=[]
-                    y=[]
-
-                    for row in training_data:
-                        X.append([row['hour_of_day'], row['day_of_week']])
-                        y.append(1 if row['fatigue_level']>=7 else 0) # Уставший если оценка >= 7
-
-                    if len(y)>0:
-                        self.model.train(np.array(X), np.array(y))
-                        logger.info('Predictor model updated complete')
-            except Exception as e:
-                logger.error(f"Failed to update model: {e}")
+        
+    
+    async def wait_virtual(self, virtual_seconds: float):
+        start = now()
+        while (now() - start).total_seconds() < virtual_seconds:
+            await asyncio.sleep(0.1)
     
     def stop(self):
         # Останавливаем сервер
@@ -157,6 +170,7 @@ class MLServer:
             self.server.close()
         self.db.close()
         logger.info("ML Server stopped")
+
     
 async def main():
     server = MLServer()

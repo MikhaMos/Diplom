@@ -9,6 +9,7 @@ from PySide6.QtCore import Qt, QTimer, Signal, QObject, Slot, QThread
 import json
 import asyncio
 import threading
+from datetime import timedelta
 
 from time_controller import now, time_controller
 
@@ -21,7 +22,7 @@ class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("Control panel")
-        self.resize(874,667)
+        self.resize(880,670)
         
         current_dir = os.path.dirname(os.path.abspath(__file__))
         ui_file=os.path.join(current_dir,'Gui.ui')
@@ -33,7 +34,8 @@ class MainWindow(QMainWindow):
         # инициализация компонентов
         self.robot_client = PyBulletClient()
         self.adaptation = adaptation.AdaptationManager()
-        self.ml_client = MLClient()
+        self.ml_check_interval = 5 # 5 минут
+        self.ml_client = MLClient(prediction_interval=self.ml_check_interval*60)
         self.db = Database()
 
         self.robot_client.connected.connect(self.on_robot_connect)
@@ -47,11 +49,12 @@ class MainWindow(QMainWindow):
         self.ml_client.predictions_received.connect(self.on_ml_prediction)
         self.ml_client.error_occurred.connect(self.on_ml_error)
 
-        #self.adaptation.apply_simple_style(self.ui) #Стиль по умолчанию
+        self.adaptation.apply_normal_style(self.ui) #Стиль по умолчанию
         # Состояния
         self.adaptive_mode = False
         self.survey_answered = False
         self.current_fatigue_level = 0
+        self.current_confidence_level = 0
         self.current_frame_pos_robot = []
         self.current_orientation_robot = []
         self.current_joint_positions = []
@@ -91,9 +94,9 @@ class MainWindow(QMainWindow):
 
         #Текста
         self.ui.StatusPanel.setText(f"Status: Инициализациия...")
-        self.ui.Label_ML_status.setText(f"ML: не подключена")
-        self.ui.Label_robot_status.setText(f"Robot: не подлючен")
-        self.ui.Label_adaptive_mode.setText(f"Упрощенный режим: выкл")
+        self.ui.Label_ML_status.setText(f" ML: не подключена")
+        self.ui.Label_robot_status.setText(f" Robot: не подлючен")
+        self.ui.Label_adaptive_mode.setText(f" Упрощенный режим: выкл")
         self.ui.label_moving.setText(f"❌")
         
         # Подключаем переключение страниц
@@ -162,10 +165,24 @@ class MainWindow(QMainWindow):
         for i, btn in enumerate(self.radio_button, 1):
             self.survey_group.addButton(btn, i)
 
+        # Второй вопрос (radioButton 11-20)
+        self.radio_button2 = [
+            self.ui.radioButton_11, self.ui.radioButton_12, self.ui.radioButton_13,
+            self.ui.radioButton_14, self.ui.radioButton_15, self.ui.radioButton_16,
+            self.ui.radioButton_17, self.ui.radioButton_18, self.ui.radioButton_19,
+            self.ui.radioButton_20
+        ]
+        self.survey_group2 = QButtonGroup(self)
+        for i, btn in enumerate(self.radio_button2, 1):
+            self.survey_group2.addButton(btn, i)
+
         # Кнопка отправки опроса
         self.ui.SentAnswer.clicked.connect(self.submit_survey)
 
     def setup_timers(self):
+
+        """
+        #Для реального времени
         # Таймеры
         self.timer = QTimer(self)
         self.timer.timeout.connect(self.update_time)
@@ -179,7 +196,16 @@ class MainWindow(QMainWindow):
         # Таймеры для проверки адаптации ML
         self.ml_check_timer = QTimer()
         self.ml_check_timer.timeout.connect(self.check_ml_adaptation)
-        self.ml_check_timer.start(60000)  # Каждую минуту
+        self.ml_check_timer.start(300000)  # Каждые 5 минут
+    """
+
+        #Для виртуального
+        self.timer = QTimer(self)
+        self.timer.timeout.connect(self.update_time_and_check_events)
+        self.timer.start(100)
+
+        self.schedule_next_survey()
+        self.schedule_next_ml_check()
 
     def connect_to_servers(self):
         # Подключаемся к серверам
@@ -258,32 +284,34 @@ class MainWindow(QMainWindow):
 
     @Slot()
     def submit_survey(self):
-        select_id = self.survey_group.checkedId()
+        fatigue_level = self.survey_group.checkedId()
+        concentration_level = self.survey_group2.checkedId()
 
-        if select_id == -1:
+        if fatigue_level == -1 or concentration_level == -1:
             QMessageBox.warning(
                 self,
                 "Error",
                 "Please answer all questions"
             ) 
+            return
         
         # Сохраняем опрос в базу данных
-        fatigue_level = select_id 
-        self.db.save_survey(fatigue_level)
+        self.db.save_survey(fatigue_level, concentration_level)
 
         # Сохраняем опрос в лог
         self.db.log_command(
             source='main_app',
             command='submit_survey',
-            parameters=f"fatigue_level={fatigue_level}",
+            parameters=f"fatigue_level={fatigue_level}, concentration_level={concentration_level}",
             success=True
         )
 
         # Обновляем состояние
         self.current_fatigue_level = fatigue_level
+        self.current_concentration_level = concentration_level
         self.survey_answered = True
 
-        self.log_message(f"Answered survey: {fatigue_level}")
+        self.ui.history_answer.append(f"Ответы опроса в time={now().strftime('%m-%d %H:%M')}: fatigue_level={fatigue_level}, concentration_level={concentration_level}")
 
         # Сбрасываем выбор
         self.survey_group.setExclusive(False)
@@ -292,25 +320,42 @@ class MainWindow(QMainWindow):
             checked_button.setChecked(False)
         self.survey_group.setExclusive(True)
 
-        # Обновляем интервал опроса
-        self.update_survey_interval()
+        self.survey_group2.setExclusive(False)
+        checked_button = self.survey_group2.checkedButton()
+        if checked_button:
+            checked_button.setChecked(False)
+        self.survey_group2.setExclusive(True)
 
+        # Обновляем интервал опроса
+        self.get_current_survey_interval_minutes()
         # переключаемся на страницу управления
         self.ui.ControlPageButton.click()
 
-    def update_survey_interval(self):
-        """Обновление интервала опроса на основе количества данных"""
-        training_data=self.db.get_training_data()
-        count=len(training_data)
-        if count<1440:
-            interval= 30*60*1000 # 30 минут
-        elif count<=2880:
-            interval= 60*60*1000 # 1 час
-        else:
-            interval= 120*60*1000 # 2 часа
 
-        self.survey_timer.setInterval(interval)
-        self.log_message(f"Updated survey interval to {interval}")
+    def schedule_next_survey(self):
+        """Устанавливает следующее время опроса на основе текущего виртуального времени и интервала."""
+        current = now()
+        interval_minutes = self.get_current_survey_interval_minutes()
+        self.next_survey_time = current + timedelta(minutes=interval_minutes)
+
+    def get_current_survey_interval_minutes(self):
+        """Обновление интервала опроса на основе количества данных"""
+        count = self.db.get_survey_count()
+        if count<1440:
+            self.ui.interval_survey.setText(f"Интервал опроса: 30 минут")
+            return 30 # 30 минут
+        elif count<=2880:
+            self.ui.interval_survey.setText(f"Интервал опроса: 60 минут")
+            return 60 # 1 час
+        else:
+            self.ui.interval_survey.setText(f"Интервал опроса: 120 минут")
+            return 120 # 2 часа
+        
+    
+    def schedule_next_ml_check(self):
+        """Следующая проверка адаптации через 5 виртуальных минут."""
+        self.next_ml_check_time = now() + timedelta(minutes=self.ml_check_interval)
+        
     
 
     @Slot()
@@ -320,11 +365,19 @@ class MainWindow(QMainWindow):
         self.ui.SurveyPageButton.click()
         self.log_message("Show survey notification")
 
+
     @Slot()
     def check_ml_adaptation(self):
         # Проверяем адаптацию ML
         if hasattr(self, 'ml_client') and self.ml_client.running:
-            self.ml_client.get_prediction()
+            self.ml_client.get_prediction(future_minutes=20)
+        
+        self.db.log_command(
+            source='main_app',
+            command='check_ml_adaptation',
+            parameters=f"{now() + timedelta(minutes=20)}",
+            success=True
+        )
     
     @Slot(dict)
     def on_robot_positions(self,positions):
@@ -400,11 +453,11 @@ class MainWindow(QMainWindow):
         self.log_message(f"Robot error: {error}")
 
     def on_robot_connect(self):
-        self.ui.Label_robot_status.setText(f"Robot подключен")
+        self.ui.Label_robot_status.setText(f" Robot подключен")
         self.log_message("Robot connected")
 
     def on_robot_disconnect(self):
-        self.ui.Label_robot_status.setText(f"Robot отключен")
+        self.ui.Label_robot_status.setText(f" Robot отключен")
         self.log_message("Robot disconnected")
     
     def on_ml_prediction(self, prediction):
@@ -422,19 +475,19 @@ class MainWindow(QMainWindow):
         self.log_message(f"ML error: {error}")
     
     def on_ml_connect(self):
-        self.ui.Label_ML_status.setText(F"ML подключена")
+        self.ui.Label_ML_status.setText(F" ML подключена")
         self.log_message("ML connected")
     
     def on_ml_disconnect(self):
-        self.ui.Label_ML_status.setText(F"ML отключена")
+        self.ui.Label_ML_status.setText(F" ML отключена")
         self.log_message("ML disconnected")
 
     def enable_adaptive_mode(self):
         self.adaptive_mode = True
         self.log_message("Adaptive mode enabled")
-        self.ui.Label_adaptive_mode.setText(f"Адаптивный режим вкл")
+        self.ui.Label_adaptive_mode.setText(f" Адаптивный режим вкл")
 
-        self.adaptation.apply_simple_style(self.ui)
+        self.adaptation.apply_adaptive_style(self.ui)
 
         #Отправляем команду адаптацию робота
         if hasattr(self, 'robot_client') and self.robot_client.running:
@@ -443,7 +496,7 @@ class MainWindow(QMainWindow):
     def disable_adaptive_mode(self):
         self.adaptive_mode = False
         self.log_message("Adaptive mode disabled")
-        self.ui.Label_adaptive_mode.setText(f"Адаптивный режим выкл")
+        self.ui.Label_adaptive_mode.setText(f" Адаптивный режим выкл")
         self.adaptation.apply_normal_style(self.ui)
         #Отправляем команду на возврат к обычному режиму робота
         if hasattr(self, 'robot_client') and self.robot_client.running:
@@ -451,9 +504,18 @@ class MainWindow(QMainWindow):
 
     
     @Slot()
-    def update_time(self):
+    def update_time_and_check_events(self):
         current_time = now().strftime( "%H:%M:%S")
-        self.ui.TimeLabel.setText(current_time)
+        self.ui.TimeLabel.setText(f"{current_time}")
+        self.ui.last_survey.setText(f"До следующего опроса: {self.next_survey_time - now()}")
+
+        if now() >= self.next_survey_time:
+            self.show_survey_notification()
+            self.schedule_next_survey()
+
+        if now() >= self.next_ml_check_time:
+            self.check_ml_adaptation()
+            self.schedule_next_ml_check()
 
     def log_message(self, message):
         #Логирование сообщений в интерфейс

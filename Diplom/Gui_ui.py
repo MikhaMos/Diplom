@@ -24,7 +24,7 @@ class Ui_MainWindow(object):
     def setupUi(self, MainWindow):
         if not MainWindow.objectName():
             MainWindow.setObjectName(u"MainWindow")
-        MainWindow.resize(874, 667)
+        MainWindow.resize(875, 671)
         self.centralwidget = QWidget(MainWindow)
         self.centralwidget.setObjectName(u"centralwidget")
         self.stackedWidget = QStackedWidget(self.centralwidget)
@@ -37,7 +37,7 @@ class Ui_MainWindow(object):
         self.MoveBox.setGeometry(QRect(490, 10, 181, 471))
         self.verticalLayoutWidget_2 = QWidget(self.MoveBox)
         self.verticalLayoutWidget_2.setObjectName(u"verticalLayoutWidget_2")
-        self.verticalLayoutWidget_2.setGeometry(QRect(0, 10, 181, 461))
+        self.verticalLayoutWidget_2.setGeometry(QRect(0, 0, 181, 471))
         self.verticalLayout_6 = QVBoxLayout(self.verticalLayoutWidget_2)
         self.verticalLayout_6.setObjectName(u"verticalLayout_6")
         self.verticalLayout_6.setContentsMargins(0, 0, 0, 0)
@@ -69,12 +69,18 @@ class Ui_MainWindow(object):
         self.horizontalLayout_8.setObjectName(u"horizontalLayout_8")
         self.YForward = QPushButton(self.verticalLayoutWidget_2)
         self.YForward.setObjectName(u"YForward")
+        self.YForward.setEnabled(True)
+        sizePolicy.setHeightForWidth(self.YForward.sizePolicy().hasHeightForWidth())
+        self.YForward.setSizePolicy(sizePolicy)
         self.YForward.setMaximumSize(QSize(16777215, 50))
 
         self.horizontalLayout_8.addWidget(self.YForward)
 
         self.YBackward = QPushButton(self.verticalLayoutWidget_2)
         self.YBackward.setObjectName(u"YBackward")
+        self.YBackward.setEnabled(True)
+        sizePolicy.setHeightForWidth(self.YBackward.sizePolicy().hasHeightForWidth())
+        self.YBackward.setSizePolicy(sizePolicy)
         self.YBackward.setMaximumSize(QSize(16777215, 50))
 
         self.horizontalLayout_8.addWidget(self.YBackward)
@@ -86,12 +92,18 @@ class Ui_MainWindow(object):
         self.horizontalLayout_9.setObjectName(u"horizontalLayout_9")
         self.ZForward = QPushButton(self.verticalLayoutWidget_2)
         self.ZForward.setObjectName(u"ZForward")
+        self.ZForward.setEnabled(True)
+        sizePolicy.setHeightForWidth(self.ZForward.sizePolicy().hasHeightForWidth())
+        self.ZForward.setSizePolicy(sizePolicy)
         self.ZForward.setMaximumSize(QSize(16777215, 50))
 
         self.horizontalLayout_9.addWidget(self.ZForward)
 
         self.ZBackward = QPushButton(self.verticalLayoutWidget_2)
         self.ZBackward.setObjectName(u"ZBackward")
+        self.ZBackward.setEnabled(True)
+        sizePolicy.setHeightForWidth(self.ZBackward.sizePolicy().hasHeightForWidth())
+        self.ZBackward.setSizePolicy(sizePolicy)
         self.ZBackward.setMaximumSize(QSize(16777215, 50))
 
         self.horizontalLayout_9.addWidget(self.ZBackward)
@@ -103,12 +115,18 @@ class Ui_MainWindow(object):
         self.horizontalLayout_10.setObjectName(u"horizontalLayout_10")
         self.AForward = QPushButton(self.verticalLayoutWidget_2)
         self.AForward.setObjectName(u"AForward")
+        self.AForward.setEnabled(True)
+        sizePolicy.setHeightForWidth(self.AForward.sizePolicy().hasHeightForWidth())
+        self.AForward.setSizePolicy(sizePolicy)
         self.AForward.setMaximumSize(QSize(16777215, 50))
 
         self.horizontalLayout_10.addWidget(self.AForward)
 
         self.ABackward = QPushButton(self.verticalLayoutWidget_2)
         self.ABackward.setObjectName(u"ABackward")
+        self.ABackward.setEnabled(True)
+        sizePolicy.setHeightForWidth(self.ABackward.sizePolicy().hasHeightForWidth())
+        self.ABackward.setSizePolicy(sizePolicy)
         self.ABackward.setMaximumSize(QSize(16777215, 50))
 
         self.horizontalLayout_10.addWidget(self.ABackward)
@@ -120,12 +138,18 @@ class Ui_MainWindow(object):
         self.horizontalLayout_11.setObjectName(u"horizontalLayout_11")
         self.BForward = QPushButton(self.verticalLayoutWidget_2)
         self.BForward.setObjectName(u"BForward")
+        self.BForward.setEnabled(True)
+        sizePolicy.setHeightForWidth(self.BForward.sizePolicy().hasHeightForWidth())
+        self.BForward.setSizePolicy(sizePolicy)
         self.BForward.setMaximumSize(QSize(16777215, 50))
 
         self.horizontalLayout_11.addWidget(self.BForward)
 
         self.BBackward = QPushButton(self.verticalLayoutWidget_2)
         self.BBackward.setObjectName(u"BBackward")
+        self.BBackward.setEnabled(True)
+        sizePolicy.setHeightForWidth(self.BBackward.sizePolicy().hasHeightForWidth())
+        self.BBackward.setSizePolicy(sizePolicy)
         self.BBackward.setMaximumSize(QSize(16777215, 50))
 
         self.horizontalLayout_11.addWidget(self.BBackward)
@@ -137,12 +161,18 @@ class Ui_MainWindow(object):
         self.horizontalLayout_12.setObjectName(u"horizontalLayout_12")
         self.CForward = QPushButton(self.verticalLayoutWidget_2)
         self.CForward.setObjectName(u"CForward")
+        self.CForward.setEnabled(True)
+        sizePolicy.setHeightForWidth(self.CForward.sizePolicy().hasHeightForWidth())
+        self.CForward.setSizePolicy(sizePolicy)
         self.CForward.setMaximumSize(QSize(16777215, 50))
 
         self.horizontalLayout_12.addWidget(self.CForward)
 
         self.CBackward = QPushButton(self.verticalLayoutWidget_2)
         self.CBackward.setObjectName(u"CBackward")
+        self.CBackward.setEnabled(True)
+        sizePolicy.setHeightForWidth(self.CBackward.sizePolicy().hasHeightForWidth())
+        self.CBackward.setSizePolicy(sizePolicy)
         self.CBackward.setMaximumSize(QSize(16777215, 50))
 
         self.horizontalLayout_12.addWidget(self.CBackward)
@@ -159,18 +189,16 @@ class Ui_MainWindow(object):
         self.verticalLayout_9 = QVBoxLayout(self.verticalLayoutWidget_5)
         self.verticalLayout_9.setObjectName(u"verticalLayout_9")
         self.verticalLayout_9.setContentsMargins(0, 0, 0, 0)
-        self.Code = QTextEdit(self.verticalLayoutWidget_5)
+        self.Code = QTextEdit(self.OutputCode)
         self.Code.setObjectName(u"Code")
+        self.Code.setGeometry(QRect(0, 0, 491, 471))
         self.Code.setReadOnly(True)
-
-        self.verticalLayout_9.addWidget(self.Code)
-
         self.ParametrsButtons = QGroupBox(self.ControlPage)
         self.ParametrsButtons.setObjectName(u"ParametrsButtons")
-        self.ParametrsButtons.setGeometry(QRect(0, 480, 491, 61))
+        self.ParametrsButtons.setGeometry(QRect(0, 490, 491, 51))
         self.horizontalLayoutWidget = QWidget(self.ParametrsButtons)
         self.horizontalLayoutWidget.setObjectName(u"horizontalLayoutWidget")
-        self.horizontalLayoutWidget.setGeometry(QRect(10, 10, 471, 41))
+        self.horizontalLayoutWidget.setGeometry(QRect(0, 0, 491, 51))
         self.horizontalLayout = QHBoxLayout(self.horizontalLayoutWidget)
         self.horizontalLayout.setObjectName(u"horizontalLayout")
         self.horizontalLayout.setContentsMargins(0, 0, 0, 0)
@@ -181,6 +209,7 @@ class Ui_MainWindow(object):
         sizePolicy1.setVerticalStretch(0)
         sizePolicy1.setHeightForWidth(self.HomeButton.sizePolicy().hasHeightForWidth())
         self.HomeButton.setSizePolicy(sizePolicy1)
+        self.HomeButton.setMaximumSize(QSize(16777215, 50))
 
         self.horizontalLayout.addWidget(self.HomeButton)
 
@@ -188,6 +217,7 @@ class Ui_MainWindow(object):
         self.SavePointButton.setObjectName(u"SavePointButton")
         sizePolicy1.setHeightForWidth(self.SavePointButton.sizePolicy().hasHeightForWidth())
         self.SavePointButton.setSizePolicy(sizePolicy1)
+        self.SavePointButton.setMaximumSize(QSize(16777215, 50))
 
         self.horizontalLayout.addWidget(self.SavePointButton)
 
@@ -195,6 +225,7 @@ class Ui_MainWindow(object):
         self.pushButton_23.setObjectName(u"pushButton_23")
         sizePolicy1.setHeightForWidth(self.pushButton_23.sizePolicy().hasHeightForWidth())
         self.pushButton_23.setSizePolicy(sizePolicy1)
+        self.pushButton_23.setMaximumSize(QSize(16777215, 50))
 
         self.horizontalLayout.addWidget(self.pushButton_23)
 
@@ -202,6 +233,7 @@ class Ui_MainWindow(object):
         self.ClearProgramButtons.setObjectName(u"ClearProgramButtons")
         sizePolicy1.setHeightForWidth(self.ClearProgramButtons.sizePolicy().hasHeightForWidth())
         self.ClearProgramButtons.setSizePolicy(sizePolicy1)
+        self.ClearProgramButtons.setMaximumSize(QSize(16777215, 50))
 
         self.horizontalLayout.addWidget(self.ClearProgramButtons)
 
@@ -210,10 +242,10 @@ class Ui_MainWindow(object):
         self.SurvayPage.setObjectName(u"SurvayPage")
         self.StatusSurvey = QGroupBox(self.SurvayPage)
         self.StatusSurvey.setObjectName(u"StatusSurvey")
-        self.StatusSurvey.setGeometry(QRect(10, 10, 161, 81))
+        self.StatusSurvey.setGeometry(QRect(10, 10, 171, 81))
         self.verticalLayoutWidget_3 = QWidget(self.StatusSurvey)
         self.verticalLayoutWidget_3.setObjectName(u"verticalLayoutWidget_3")
-        self.verticalLayoutWidget_3.setGeometry(QRect(0, 0, 160, 80))
+        self.verticalLayoutWidget_3.setGeometry(QRect(0, 0, 171, 80))
         self.verticalLayout_7 = QVBoxLayout(self.verticalLayoutWidget_3)
         self.verticalLayout_7.setObjectName(u"verticalLayout_7")
         self.verticalLayout_7.setContentsMargins(0, 0, 0, 0)
@@ -222,20 +254,20 @@ class Ui_MainWindow(object):
 
         self.verticalLayout_7.addWidget(self.label_8)
 
-        self.label_9 = QLabel(self.verticalLayoutWidget_3)
-        self.label_9.setObjectName(u"label_9")
+        self.last_survey = QLabel(self.verticalLayoutWidget_3)
+        self.last_survey.setObjectName(u"last_survey")
 
-        self.verticalLayout_7.addWidget(self.label_9)
+        self.verticalLayout_7.addWidget(self.last_survey)
 
-        self.label_10 = QLabel(self.verticalLayoutWidget_3)
-        self.label_10.setObjectName(u"label_10")
+        self.interval_survey = QLabel(self.verticalLayoutWidget_3)
+        self.interval_survey.setObjectName(u"interval_survey")
 
-        self.verticalLayout_7.addWidget(self.label_10)
+        self.verticalLayout_7.addWidget(self.interval_survey)
 
-        self.Question = QGroupBox(self.SurvayPage)
-        self.Question.setObjectName(u"Question")
-        self.Question.setGeometry(QRect(10, 120, 651, 81))
-        self.horizontalLayoutWidget_7 = QWidget(self.Question)
+        self.Question_1 = QGroupBox(self.SurvayPage)
+        self.Question_1.setObjectName(u"Question_1")
+        self.Question_1.setGeometry(QRect(10, 120, 651, 81))
+        self.horizontalLayoutWidget_7 = QWidget(self.Question_1)
         self.horizontalLayoutWidget_7.setObjectName(u"horizontalLayoutWidget_7")
         self.horizontalLayoutWidget_7.setGeometry(QRect(0, 0, 651, 81))
         self.horizontalLayout_13 = QHBoxLayout(self.horizontalLayoutWidget_7)
@@ -244,7 +276,7 @@ class Ui_MainWindow(object):
         self.horizontalLayout_13.setContentsMargins(0, 0, 0, 0)
         self.label_11 = QLabel(self.horizontalLayoutWidget_7)
         self.label_11.setObjectName(u"label_11")
-        self.label_11.setMaximumSize(QSize(70, 16777215))
+        self.label_11.setMaximumSize(QSize(75, 16777215))
 
         self.horizontalLayout_13.addWidget(self.label_11)
 
@@ -318,14 +350,90 @@ class Ui_MainWindow(object):
         self.verticalLayout_8 = QVBoxLayout(self.verticalLayoutWidget_4)
         self.verticalLayout_8.setObjectName(u"verticalLayout_8")
         self.verticalLayout_8.setContentsMargins(0, 0, 0, 0)
-        self.textEdit_2 = QTextEdit(self.verticalLayoutWidget_4)
-        self.textEdit_2.setObjectName(u"textEdit_2")
+        self.history_answer = QTextEdit(self.verticalLayoutWidget_4)
+        self.history_answer.setObjectName(u"history_answer")
 
-        self.verticalLayout_8.addWidget(self.textEdit_2)
+        self.verticalLayout_8.addWidget(self.history_answer)
 
         self.SentAnswer = QPushButton(self.SurvayPage)
         self.SentAnswer.setObjectName(u"SentAnswer")
         self.SentAnswer.setGeometry(QRect(530, 480, 111, 41))
+        self.Question_2 = QGroupBox(self.SurvayPage)
+        self.Question_2.setObjectName(u"Question_2")
+        self.Question_2.setGeometry(QRect(10, 210, 651, 81))
+        self.horizontalLayoutWidget_9 = QWidget(self.Question_2)
+        self.horizontalLayoutWidget_9.setObjectName(u"horizontalLayoutWidget_9")
+        self.horizontalLayoutWidget_9.setGeometry(QRect(0, 0, 651, 81))
+        self.horizontalLayout_15 = QHBoxLayout(self.horizontalLayoutWidget_9)
+        self.horizontalLayout_15.setSpacing(1)
+        self.horizontalLayout_15.setObjectName(u"horizontalLayout_15")
+        self.horizontalLayout_15.setContentsMargins(0, 0, 0, 0)
+        self.label_12 = QLabel(self.horizontalLayoutWidget_9)
+        self.label_12.setObjectName(u"label_12")
+        self.label_12.setMaximumSize(QSize(80, 16777215))
+
+        self.horizontalLayout_15.addWidget(self.label_12)
+
+        self.radioButton_11 = QRadioButton(self.horizontalLayoutWidget_9)
+        self.radioButton_11.setObjectName(u"radioButton_11")
+        self.radioButton_11.setMaximumSize(QSize(35, 16777215))
+
+        self.horizontalLayout_15.addWidget(self.radioButton_11)
+
+        self.radioButton_12 = QRadioButton(self.horizontalLayoutWidget_9)
+        self.radioButton_12.setObjectName(u"radioButton_12")
+        self.radioButton_12.setMaximumSize(QSize(35, 16777215))
+
+        self.horizontalLayout_15.addWidget(self.radioButton_12)
+
+        self.radioButton_13 = QRadioButton(self.horizontalLayoutWidget_9)
+        self.radioButton_13.setObjectName(u"radioButton_13")
+        self.radioButton_13.setMaximumSize(QSize(35, 16777215))
+
+        self.horizontalLayout_15.addWidget(self.radioButton_13)
+
+        self.radioButton_14 = QRadioButton(self.horizontalLayoutWidget_9)
+        self.radioButton_14.setObjectName(u"radioButton_14")
+        self.radioButton_14.setMaximumSize(QSize(35, 16777215))
+
+        self.horizontalLayout_15.addWidget(self.radioButton_14)
+
+        self.radioButton_15 = QRadioButton(self.horizontalLayoutWidget_9)
+        self.radioButton_15.setObjectName(u"radioButton_15")
+        self.radioButton_15.setMaximumSize(QSize(35, 16777215))
+
+        self.horizontalLayout_15.addWidget(self.radioButton_15)
+
+        self.radioButton_16 = QRadioButton(self.horizontalLayoutWidget_9)
+        self.radioButton_16.setObjectName(u"radioButton_16")
+        self.radioButton_16.setMaximumSize(QSize(35, 16777215))
+
+        self.horizontalLayout_15.addWidget(self.radioButton_16)
+
+        self.radioButton_17 = QRadioButton(self.horizontalLayoutWidget_9)
+        self.radioButton_17.setObjectName(u"radioButton_17")
+        self.radioButton_17.setMaximumSize(QSize(35, 16777215))
+
+        self.horizontalLayout_15.addWidget(self.radioButton_17)
+
+        self.radioButton_18 = QRadioButton(self.horizontalLayoutWidget_9)
+        self.radioButton_18.setObjectName(u"radioButton_18")
+        self.radioButton_18.setMaximumSize(QSize(35, 16777215))
+
+        self.horizontalLayout_15.addWidget(self.radioButton_18)
+
+        self.radioButton_19 = QRadioButton(self.horizontalLayoutWidget_9)
+        self.radioButton_19.setObjectName(u"radioButton_19")
+        self.radioButton_19.setMaximumSize(QSize(35, 16777215))
+
+        self.horizontalLayout_15.addWidget(self.radioButton_19)
+
+        self.radioButton_20 = QRadioButton(self.horizontalLayoutWidget_9)
+        self.radioButton_20.setObjectName(u"radioButton_20")
+        self.radioButton_20.setMaximumSize(QSize(35, 16777215))
+
+        self.horizontalLayout_15.addWidget(self.radioButton_20)
+
         self.stackedWidget.addWidget(self.SurvayPage)
         self.StatusPanel = QLabel(self.centralwidget)
         self.StatusPanel.setObjectName(u"StatusPanel")
@@ -335,12 +443,15 @@ class Ui_MainWindow(object):
         self.StatusPanel_2.setGeometry(QRect(10, 120, 171, 81))
         self.verticalLayoutWidget = QWidget(self.StatusPanel_2)
         self.verticalLayoutWidget.setObjectName(u"verticalLayoutWidget")
-        self.verticalLayoutWidget.setGeometry(QRect(0, 0, 171, 80))
+        self.verticalLayoutWidget.setGeometry(QRect(0, 0, 171, 81))
         self.verticalLayout = QVBoxLayout(self.verticalLayoutWidget)
+        self.verticalLayout.setSpacing(0)
         self.verticalLayout.setObjectName(u"verticalLayout")
-        self.verticalLayout.setContentsMargins(0, 0, 0, 0)
+        self.verticalLayout.setContentsMargins(2, 2, 0, 0)
         self.Label_adaptive_mode = QLabel(self.verticalLayoutWidget)
         self.Label_adaptive_mode.setObjectName(u"Label_adaptive_mode")
+        self.Label_adaptive_mode.setMaximumSize(QSize(170, 16777215))
+        self.Label_adaptive_mode.setSizeIncrement(QSize(0, 0))
 
         self.verticalLayout.addWidget(self.Label_adaptive_mode)
 
@@ -357,30 +468,6 @@ class Ui_MainWindow(object):
         self.TimeLabel = QLabel(self.centralwidget)
         self.TimeLabel.setObjectName(u"TimeLabel")
         self.TimeLabel.setGeometry(QRect(10, 10, 121, 16))
-        self.StatusRobot = QGroupBox(self.centralwidget)
-        self.StatusRobot.setObjectName(u"StatusRobot")
-        self.StatusRobot.setGeometry(QRect(690, 0, 181, 21))
-        self.horizontalLayoutWidget_8 = QWidget(self.StatusRobot)
-        self.horizontalLayoutWidget_8.setObjectName(u"horizontalLayoutWidget_8")
-        self.horizontalLayoutWidget_8.setGeometry(QRect(0, 0, 181, 21))
-        self.horizontalLayout_14 = QHBoxLayout(self.horizontalLayoutWidget_8)
-        self.horizontalLayout_14.setObjectName(u"horizontalLayout_14")
-        self.horizontalLayout_14.setContentsMargins(0, 0, 0, 0)
-        self.label_moving = QLabel(self.horizontalLayoutWidget_8)
-        self.label_moving.setObjectName(u"label_moving")
-
-        self.horizontalLayout_14.addWidget(self.label_moving)
-
-        self.label_6 = QLabel(self.horizontalLayoutWidget_8)
-        self.label_6.setObjectName(u"label_6")
-
-        self.horizontalLayout_14.addWidget(self.label_6)
-
-        self.label_7 = QLabel(self.horizontalLayoutWidget_8)
-        self.label_7.setObjectName(u"label_7")
-
-        self.horizontalLayout_14.addWidget(self.label_7)
-
         self.Positions = QGroupBox(self.centralwidget)
         self.Positions.setObjectName(u"Positions")
         self.Positions.setGeometry(QRect(10, 480, 171, 141))
@@ -411,14 +498,14 @@ class Ui_MainWindow(object):
         self.horizontalLayoutWidget_2.setObjectName(u"horizontalLayoutWidget_2")
         self.horizontalLayoutWidget_2.setGeometry(QRect(0, 0, 861, 51))
         self.horizontalLayout_2 = QHBoxLayout(self.horizontalLayoutWidget_2)
-        self.horizontalLayout_2.setSpacing(0)
+        self.horizontalLayout_2.setSpacing(10)
         self.horizontalLayout_2.setObjectName(u"horizontalLayout_2")
-        self.horizontalLayout_2.setContentsMargins(0, 0, 0, 0)
+        self.horizontalLayout_2.setContentsMargins(2, 2, 2, 0)
         self.ControlPageButton = QPushButton(self.horizontalLayoutWidget_2)
         self.ControlPageButton.setObjectName(u"ControlPageButton")
         sizePolicy1.setHeightForWidth(self.ControlPageButton.sizePolicy().hasHeightForWidth())
         self.ControlPageButton.setSizePolicy(sizePolicy1)
-        self.ControlPageButton.setMaximumSize(QSize(16777215, 16777215))
+        self.ControlPageButton.setMaximumSize(QSize(16777215, 50))
 
         self.horizontalLayout_2.addWidget(self.ControlPageButton)
 
@@ -426,7 +513,7 @@ class Ui_MainWindow(object):
         self.SurveyPageButton.setObjectName(u"SurveyPageButton")
         sizePolicy1.setHeightForWidth(self.SurveyPageButton.sizePolicy().hasHeightForWidth())
         self.SurveyPageButton.setSizePolicy(sizePolicy1)
-        self.SurveyPageButton.setMaximumSize(QSize(16777215, 16777215))
+        self.SurveyPageButton.setMaximumSize(QSize(16777215, 50))
 
         self.horizontalLayout_2.addWidget(self.SurveyPageButton)
 
@@ -435,7 +522,7 @@ class Ui_MainWindow(object):
         self.pushButton_5.setEnabled(True)
         sizePolicy1.setHeightForWidth(self.pushButton_5.sizePolicy().hasHeightForWidth())
         self.pushButton_5.setSizePolicy(sizePolicy1)
-        self.pushButton_5.setMaximumSize(QSize(16777215, 16777215))
+        self.pushButton_5.setMaximumSize(QSize(16777215, 50))
 
         self.horizontalLayout_2.addWidget(self.pushButton_5)
 
@@ -443,7 +530,7 @@ class Ui_MainWindow(object):
         self.pushButton_6.setObjectName(u"pushButton_6")
         sizePolicy1.setHeightForWidth(self.pushButton_6.sizePolicy().hasHeightForWidth())
         self.pushButton_6.setSizePolicy(sizePolicy1)
-        self.pushButton_6.setMaximumSize(QSize(16777215, 16777215))
+        self.pushButton_6.setMaximumSize(QSize(16777215, 50))
 
         self.horizontalLayout_2.addWidget(self.pushButton_6)
 
@@ -451,7 +538,7 @@ class Ui_MainWindow(object):
         self.pushButton_7.setObjectName(u"pushButton_7")
         sizePolicy1.setHeightForWidth(self.pushButton_7.sizePolicy().hasHeightForWidth())
         self.pushButton_7.setSizePolicy(sizePolicy1)
-        self.pushButton_7.setMaximumSize(QSize(16777215, 16777215))
+        self.pushButton_7.setMaximumSize(QSize(16777215, 50))
 
         self.horizontalLayout_2.addWidget(self.pushButton_7)
 
@@ -459,7 +546,7 @@ class Ui_MainWindow(object):
         self.pushButton_8.setObjectName(u"pushButton_8")
         sizePolicy1.setHeightForWidth(self.pushButton_8.sizePolicy().hasHeightForWidth())
         self.pushButton_8.setSizePolicy(sizePolicy1)
-        self.pushButton_8.setMaximumSize(QSize(16777215, 16777215))
+        self.pushButton_8.setMaximumSize(QSize(16777215, 50))
 
         self.horizontalLayout_2.addWidget(self.pushButton_8)
 
@@ -467,10 +554,34 @@ class Ui_MainWindow(object):
         self.AutomaticModeButton.setObjectName(u"AutomaticModeButton")
         self.AutomaticModeButton.setGeometry(QRect(610, 0, 61, 21))
         self.AutomaticModeButton.setTristate(False)
+        self.StatusRobot = QGroupBox(self.centralwidget)
+        self.StatusRobot.setObjectName(u"StatusRobot")
+        self.StatusRobot.setGeometry(QRect(680, 0, 191, 21))
+        self.horizontalLayoutWidget_8 = QWidget(self.StatusRobot)
+        self.horizontalLayoutWidget_8.setObjectName(u"horizontalLayoutWidget_8")
+        self.horizontalLayoutWidget_8.setGeometry(QRect(0, 0, 191, 21))
+        self.horizontalLayout_14 = QHBoxLayout(self.horizontalLayoutWidget_8)
+        self.horizontalLayout_14.setObjectName(u"horizontalLayout_14")
+        self.horizontalLayout_14.setContentsMargins(0, 0, 0, 0)
+        self.label_moving = QLabel(self.horizontalLayoutWidget_8)
+        self.label_moving.setObjectName(u"label_moving")
+
+        self.horizontalLayout_14.addWidget(self.label_moving)
+
+        self.label_6 = QLabel(self.horizontalLayoutWidget_8)
+        self.label_6.setObjectName(u"label_6")
+
+        self.horizontalLayout_14.addWidget(self.label_6)
+
+        self.label_7 = QLabel(self.horizontalLayoutWidget_8)
+        self.label_7.setObjectName(u"label_7")
+
+        self.horizontalLayout_14.addWidget(self.label_7)
+
         MainWindow.setCentralWidget(self.centralwidget)
         self.menubar = QMenuBar(MainWindow)
         self.menubar.setObjectName(u"menubar")
-        self.menubar.setGeometry(QRect(0, 0, 874, 21))
+        self.menubar.setGeometry(QRect(0, 0, 875, 21))
         MainWindow.setMenuBar(self.menubar)
         self.statusbar = QStatusBar(MainWindow)
         self.statusbar.setObjectName(u"statusbar")
@@ -512,10 +623,10 @@ class Ui_MainWindow(object):
         self.ClearProgramButtons.setText(QCoreApplication.translate("MainWindow", u"ClearProgram", None))
         self.StatusSurvey.setTitle("")
         self.label_8.setText(QCoreApplication.translate("MainWindow", u"TextLabel", None))
-        self.label_9.setText(QCoreApplication.translate("MainWindow", u"TextLabel", None))
-        self.label_10.setText(QCoreApplication.translate("MainWindow", u"TextLabel", None))
-        self.Question.setTitle("")
-        self.label_11.setText(QCoreApplication.translate("MainWindow", u"TextLabel", None))
+        self.last_survey.setText(QCoreApplication.translate("MainWindow", u"TextLabel", None))
+        self.interval_survey.setText(QCoreApplication.translate("MainWindow", u"TextLabel", None))
+        self.Question_1.setTitle("")
+        self.label_11.setText(QCoreApplication.translate("MainWindow", u"\u0423\u0441\u0442\u0430\u043b\u043e\u0441\u0442\u044c:", None))
         self.radioButton.setText(QCoreApplication.translate("MainWindow", u"1", None))
         self.radioButton_2.setText(QCoreApplication.translate("MainWindow", u"2", None))
         self.radioButton_3.setText(QCoreApplication.translate("MainWindow", u"3", None))
@@ -528,16 +639,24 @@ class Ui_MainWindow(object):
         self.radioButton_10.setText(QCoreApplication.translate("MainWindow", u"10", None))
         self.HistorySurvey.setTitle(QCoreApplication.translate("MainWindow", u"\u0418\u0441\u0442\u043e\u0440\u0438\u044f", None))
         self.SentAnswer.setText(QCoreApplication.translate("MainWindow", u"\u041e\u0442\u043f\u0440\u0430\u0432\u0438\u0442\u044c", None))
+        self.Question_2.setTitle("")
+        self.label_12.setText(QCoreApplication.translate("MainWindow", u"\u041a\u043e\u043d\u0446\u0435\u043d\u0442\u0440\u0430\u0446\u0438\u044f", None))
+        self.radioButton_11.setText(QCoreApplication.translate("MainWindow", u"1", None))
+        self.radioButton_12.setText(QCoreApplication.translate("MainWindow", u"2", None))
+        self.radioButton_13.setText(QCoreApplication.translate("MainWindow", u"3", None))
+        self.radioButton_14.setText(QCoreApplication.translate("MainWindow", u"4", None))
+        self.radioButton_15.setText(QCoreApplication.translate("MainWindow", u"5", None))
+        self.radioButton_16.setText(QCoreApplication.translate("MainWindow", u"6", None))
+        self.radioButton_17.setText(QCoreApplication.translate("MainWindow", u"7", None))
+        self.radioButton_18.setText(QCoreApplication.translate("MainWindow", u"8", None))
+        self.radioButton_19.setText(QCoreApplication.translate("MainWindow", u"9", None))
+        self.radioButton_20.setText(QCoreApplication.translate("MainWindow", u"10", None))
         self.StatusPanel.setText(QCoreApplication.translate("MainWindow", u"TextLabel", None))
         self.StatusPanel_2.setTitle("")
         self.Label_adaptive_mode.setText(QCoreApplication.translate("MainWindow", u"TextLabel", None))
         self.Label_ML_status.setText(QCoreApplication.translate("MainWindow", u"TextLabel", None))
         self.Label_robot_status.setText(QCoreApplication.translate("MainWindow", u"TextLabel", None))
         self.TimeLabel.setText(QCoreApplication.translate("MainWindow", u"Time: ", None))
-        self.StatusRobot.setTitle("")
-        self.label_moving.setText(QCoreApplication.translate("MainWindow", u"TextLabel", None))
-        self.label_6.setText(QCoreApplication.translate("MainWindow", u"TextLabel", None))
-        self.label_7.setText(QCoreApplication.translate("MainWindow", u"TextLabel", None))
         self.Positions.setTitle("")
         self.OutLog.setTitle("")
         self.PagesButton.setTitle("")
@@ -548,5 +667,9 @@ class Ui_MainWindow(object):
         self.pushButton_7.setText(QCoreApplication.translate("MainWindow", u"PushButton", None))
         self.pushButton_8.setText(QCoreApplication.translate("MainWindow", u"PushButton", None))
         self.AutomaticModeButton.setText(QCoreApplication.translate("MainWindow", u"\u0410\u0432\u0442\u043e", None))
+        self.StatusRobot.setTitle("")
+        self.label_moving.setText(QCoreApplication.translate("MainWindow", u"TextLabel", None))
+        self.label_6.setText(QCoreApplication.translate("MainWindow", u"TextLabel", None))
+        self.label_7.setText(QCoreApplication.translate("MainWindow", u"TextLabel", None))
     # retranslateUi
 

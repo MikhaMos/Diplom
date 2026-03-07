@@ -1,15 +1,16 @@
 import websockets
 import asyncio
 import json
-from database import Database
 import logging
 
 from typing import Optional,Dict,Any, List
 import threading
 from threading import Thread
 from PySide6.QtCore import Signal, QObject
+from datetime import timedelta
 
 from time_controller import now 
+from database import Database
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -20,7 +21,7 @@ class MLClient(QObject):
     predictions_received = Signal(dict)
     error_occurred = Signal(str)
 
-    def __init__(self, uri: str = "ws://localhost:8766", prediction_interval: float = 60.0):
+    def __init__(self, uri: str = "ws://localhost:8766", prediction_interval: float = 300.0):
         super().__init__()
         self.uri = uri
         self.websocket: Optional[websockets.WebSocketClientProtocol] = None
@@ -40,22 +41,25 @@ class MLClient(QObject):
     async def _monitor_predictions(self):
         while self.websocket and self.running:
             try:
-                await self.get_prediction_async()
-                await asyncio.sleep(self.prediction_interval)
+                #await self.get_prediction_async(future_minutes=20) запрос из главного приложения
+                await self.wait_virtual(self.prediction_interval)
             except Exception as e:
                 logger.error(f"Error while monitoring predictions: {e}")
                 self.error_occurred.emit(str(e))
                 raise
     
-    async def get_prediction_async(self, timestamp = None) -> Dict[str, Any]:
+    async def get_prediction_async(self, future_minutes: int=0) -> Dict[str, Any]:
         if not self.websocket or not self.running:
             raise ConnectionError("Not connected to server")
         try:
-            if timestamp is None:
-                timestamp = now()
+            if future_minutes >0:
+                target_time = now() + timedelta(minutes=future_minutes)
+            else:
+                target_time = now()
+
             message = {
                 "command": "predict",
-                "timestamp": timestamp.isoformat()
+                "timestamp": target_time.isoformat()
                 }
             await self.websocket.send(json.dumps(message))
             response = await self.websocket.recv()
@@ -65,21 +69,20 @@ class MLClient(QObject):
                 self.last_prediction = result
 
                 features = {
-                    'hour': timestamp.hour,
-                    'day_of_week': timestamp.weekday
+                    'hour': target_time.hour,
+                    'day_of_week': target_time.weekday
                 }
 
                 self.db.log_ml_prediction(
                                     features=features,
                                     prediction=result.get('prediction'),
                                     coffidence=result.get('confidence'),
-                                    threshold_used=result.get('threshold',0.8),
+                                    threshold_used=result.get('threshold_used', 0.65),
                                     adaptation_triggered=result.get('requires_adaptation',False)
                                     )
-
+                
                 self.predictions_received.emit(result)
             return result
-        
         except Exception as e:
             logger.error(f"Error while getting prediction: {e}")
             raise
@@ -103,9 +106,9 @@ class MLClient(QObject):
             return 0.0
         else:
             return min(1.0, (confidence-threshold)/(1.0-threshold))
-
+    """
     async def send_training_data_async(self, X:List, y:List):
-         """Отправляет данные для дообучения модели"""
+         #Отправляет данные для дообучения модели
          if not self.websocket or not self.running:
             raise ConnectionError("Not connected to server")
          try:
@@ -122,6 +125,18 @@ class MLClient(QObject):
          except Exception as e:
             logger.error(f"Error while sending training data: {e}")
             raise
+            
+       def send_training_data(self, X: list, y: list):
+        #Отправляет данные для обучения из главного потока
+        if not self.running or not self.loop or self.loop.is_closed():
+            logger.warning("Cannot send training data: client not running")
+            return
+        
+        asyncio.run_coroutine_threadsafe(
+            self.send_training_data_async(X, y),
+            self.loop
+        )
+    """
     
     def start(self):
         self.loop = asyncio.new_event_loop()
@@ -195,27 +210,26 @@ class MLClient(QObject):
         thread.start()
         return thread
 
-    def get_prediction(self):
+    def get_prediction(self, future_minutes: int):
         """Запрашивает предсказание из главного потока"""
         if not self.running or not self.loop or self.loop.is_closed():
             logger.warning("Cannot get prediction: client not running")
             return
         
         asyncio.run_coroutine_threadsafe(
-            self.get_prediction_async(),
+            self.get_prediction_async(future_minutes=future_minutes),
             self.loop
         )
 
-    def send_training_data(self, X: list, y: list):
-        """Отправляет данные для обучения из главного потока"""
-        if not self.running or not self.loop or self.loop.is_closed():
-            logger.warning("Cannot send training data: client not running")
-            return
-        
-        asyncio.run_coroutine_threadsafe(
-            self.send_training_data_async(X, y),
-            self.loop
-        )
+    async def wait_virtual(self, virtual_seconds: float):
+        """Ожидает virtual_seconds виртуального времени."""
+        start = now()
+        while True:
+            elapsed = (now() - start).total_seconds()
+            if elapsed > virtual_seconds:
+                break
+            await asyncio.sleep(0.1)
+
 
     def stop(self):
         self.running=False

@@ -2,178 +2,284 @@
 class AdaptationManager:
     def __init__(self):
         self.styles = {
-            'normal': self.get_normal_style(),
-            'simple': self.get_simple_style(),
-            'contrast': self.get_contrast_style()
+            'normal': self._get_normal_style(),
+            'adaptive': self._get_adaptive_style()
         }
 
-    def get_normal_style(self):
+        # Имена второстепенных элементов, которые скрываются в адаптивном режиме
+        self.non_essential_buttons = [
+                'pushButton_22', 'pushButton_23', 'pushButton_24'
+            ]
+        
+        # Основные кнопки управления движением (должны быть крупнее в адаптивном режиме)
+        self.main_control_buttons = [
+            'XForwardButton', 'XBackwardButton',
+            'YForwardButton', 'YBackwardButton',
+            'ZForwardButton', 'ZBackwardButton',
+            'AForwardButton', 'ABackwardButton',
+            'BForwardButton', 'BBackwardButton',
+            'CForwardButton', 'CBackwardButton'
+        ]
+
+         # Важные функциональные кнопки (Home, SavePoint, ClearProgram)
+        self.functional_buttons = [
+            'HomeButton', 'SavePointButton', 'ClearProgramButtons'
+        ]
+
+    def _get_normal_style(self):
+        """
+        Нормальный режим (стандартная работа оператора).
+        Цветовая гамма: нейтральные серые тона, синий акцент.
+        Элементы среднего размера, хорошая читаемость, минимальная нагрузка на зрение.
+        Соответствует рекомендациям по эргономике: равномерное распределение контраста,
+        отсутствие резких переходов, единообразие форм.
+        """
         return """
+            /* ========== ГЛАВНОЕ ОКНО ========== */
             QMainWindow {
                 background-color: #f0f0f0;
             }
+
+            /* ========== КНОПКИ ========== */
+            /* Базовый стиль для всех QPushButton */
             QPushButton {
-                background-color: #0078d7;
+                background-color: #2c3e50;
                 color: white;
                 border: none;
-                padding: 8px;
+                padding: 6px 10px;
+                border-radius: 0px;
+                font-size: 11px;
+                font-weight: normal;
+            }
+            QPushButton:hover {
+                background-color: #34495e;
+            }
+            QPushButton:pressed {
+                background-color: #1e2b38;
+            }
+
+            /* Кнопки управления движением (основные) */
+            #XForward, #XBackward, #YForward, #YBackward,
+            #ZForward, #ZBackward, #AForward, #ABackward,
+            #BForward, #BBackward, #CForward, #CBackward {
+                min-width: 50px;
+                min-height: 30px;
+            }
+
+            /* Функциональные кнопки (Home, SavePoint, ClearProgram) */
+            #HomeButton, #SavePointButton, #ClearProgramButtons {
+                min-width: 70px;
+                min-height: 30px;
+            }
+
+            /* Кнопки переключения страниц (верхняя панель) */
+            #ControlPageButton, #SurveyPageButton,
+            #pushButton_5, #pushButton_6, #pushButton_7, #pushButton_8 {
+                background-color: #3f51b5;  /* выделены другим цветом */
+            }
+            #ControlPageButton:hover, #SurveyPageButton:hover,
+            #pushButton_5:hover, #pushButton_6:hover,
+            #pushButton_7:hover, #pushButton_8:hover {
+                background-color: #5c6bc0;
+            }
+
+            /* ========== ЧЕКБОКС ========== */
+            #AutomaticModeButton {
+                color: #37474f;
+                spacing: 4px;
+            }
+            #AutomaticModeButton::indicator {
+                width: 14px;
+                height: 14px;
+            }
+
+            /* ========== ГРУППЫ ========== */
+            QGroupBox {
+                border: 0px solid #b0bec5;
                 border-radius: 4px;
-                font-size: 14px;
-            }
-            QPushButton:hover {
-                background-color: #005a9e;
-            }
-            QPushButton:pressed {
-                background-color: #004578;
-            }
-            QGroupBox {
-                border: 2px solid #cccccc;
-                border-radius: 5px;
-                margin-top: 10px;
-                font-weight: bold;
+                margin-top: 6px;
+                font-weight: normal;
+                color: #37474f;
             }
             QGroupBox::title {
                 subcontrol-origin: margin;
-                left: 10px;
-                padding: 0 5px 0 5px;
+                left: 8px;
+                padding: 0 4px;
+                background-color: #f0f0f0;
             }
-            
-        """
-    def get_simple_style(self):
-        """Упрощенный стиль для адаптивного режима"""
-        return """
-            QMainWindow {
-                background-color: #e6f3ff;
+
+            /* ========== ТЕКСТОВЫЕ ПОЛЯ ========== */
+            QTextEdit, QPlainTextEdit {
+                background-color: white;
+                border: 1px solid #b0bec5;
+                border-radius: 2px;
+                font-size: 11px;
             }
-            QPushButton {
-                background-color: #28a745;
-                color: white;
-                border: none;
-                padding: 12px;
-                border-radius: 6px;
-                font-size: 16px;
-                font-weight: bold;
-            }
-            QPushButton:hover {
-                background-color: #218838;
-            }
-            QPushButton:pressed {
-                background-color: #1e7e34;
-            }
-            QGroupBox {
-                border: 3px solid #28a745;
-                border-radius: 5px;
-                margin-top: 10px;
-                font-weight: bold;
-                font-size: 14px;
-            }
-            QGroupBox::title {
-                subcontrol-origin: margin;
-                left: 10px;
-                padding: 0 5px 0 5px;
-                color: #28a745;
-            }
-            QTextEdit {
-                background-color: #ffffff;
-                border: 2px solid #cccccc;
-                font-size: 14px;
-            }
-        """
-    
-    def get_contrast_style(self):
-        """Контрастный стиль для уставших операторов"""
-        return """
-            QMainWindow {
-                background-color: #000000;
-            }
-            QPushButton {
-                background-color: #ff6b6b;
-                color: black;
-                border: 2px solid #ff6b6b;
-                padding: 10px;
-                border-radius: 5px;
-                font-size: 15px;
-                font-weight: bold;
-            }
-            QPushButton:hover {
-                background-color: #ff5252;
-            }
-            QGroupBox {
-                border: 2px solid #ff6b6b;
-                color: #ff6b6b;
-                font-weight: bold;
-            }
+
+            /* ========== НАДПИСИ (LABEL) ========== */
             QLabel {
-                color: #ffffff;
-                font-size: 14px;
+                color: #000000;
+                font-size: 12px;
             }
-            QTextEdit {
-                background-color: #333333;
-                color: #ffffff;
-                border: 1px solid #ff6b6b;
-            }"""
+            #TimeLabel, #StatusPanel,
+            #Label_adaptive_mode, #Label_ML_status, #Label_robot_status {
+                font-weight: bold;
+            }
+            #label_moving, #label_6, #label_7 {
+                font-size: 12px;
+            }
+
+            /* ========== РАДИО-КНОПКИ ========== */
+            QRadioButton {
+                color: #000000;
+                font-size: 13px;
+            }
+        """
+
+    def _get_adaptive_style(self):
+        """
+        Адаптивный режим (для уставшего оператора).
+        Повышенная контрастность, крупные элементы управления, тёплая цветовая гамма
+        для поддержания внимания и снижения когнитивной нагрузки.
+        Второстепенные элементы скрыты, основные кнопки увеличены.
+        """
+        return """
+            /* ========== ГЛАВНОЕ ОКНО ========== */
+            QMainWindow {
+                background-color: #263238;
+            }
+
+            /* ========== КНОПКИ ========== */
+            QPushButton {
+                background-color: #f39c12;
+                color: black;
+                border: 1px solid #e67e22;
+                padding: 8px 12px;
+                border-radius: 4px;
+                font-size: 12px;
+                font-weight: bold;
+            }
+            QPushButton:hover {
+                background-color: #e67e22;
+            }
+            QPushButton:pressed {
+                background-color: #d35400;
+            }
+
+            /* Кнопки управления движением (чуть крупнее) */
+            #XForward, #XBackward, #YForward, #YBackward,
+            #ZForward, #ZBackward, #AForward, #ABackward,
+            #BForward, #BBackward, #CForward, #CBackward {
+                min-width: 60px;
+                min-height: 36px;
+            }
+
+            /* Функциональные кнопки */
+            #HomeButton, #SavePointButton, #ClearProgramButtons {
+                min-width: 80px;
+                min-height: 36px;
+            }
+
+            /* Кнопки переключения страниц */
+            #ControlPageButton, #SurveyPageButton,
+            #pushButton_5, #pushButton_6, #pushButton_7, #pushButton_8 {
+                background-color: #e67e22;
+                border-color: #d35400;
+            }
+            #ControlPageButton:hover, #SurveyPageButton:hover,
+            #pushButton_5:hover, #pushButton_6:hover,
+            #pushButton_7:hover, #pushButton_8:hover {
+                background-color: #d35400;
+            }
+
+            /* ========== ЧЕКБОКС ========== */
+            #AutomaticModeButton {
+                color: #ecf0f1;
+                spacing: 5px;
+                font-size: 12px;
+            }
+            #AutomaticModeButton::indicator {
+                width: 16px;
+                height: 16px;
+            }
+
+            /* ========== ГРУППЫ ========== */
+            QGroupBox {
+                border: 0px solid #f39c12;
+                border-radius: 4px;
+                margin-top: 6px;
+                font-weight: normal;
+                color: #f39c12;
+            }
+            QGroupBox::title {
+                subcontrol-origin: margin;
+                left: 8px;
+                padding: 0 4px;
+                background-color: #263238;
+            }
+
+            /* ========== ТЕКСТОВЫЕ ПОЛЯ ========== */
+            QTextEdit, QPlainTextEdit {
+                background-color: #2c3e50;
+                color: #ecf0f1;
+                border: 1px solid #f39c12;
+                border-radius: 3px;
+                font-size: 12px;
+            }
+
+            /* ========== НАДПИСИ ========== */
+            QLabel {
+                color: #ecf0f1;
+                font-size: 12px;
+            }
+            #TimeLabel, #StatusPanel,
+            #Label_adaptive_mode, #Label_ML_status, #Label_robot_status {
+                font-weight: bold;
+            }
+            #label_moving, #label_6, #label_7 {
+                font-size: 13px;
+            }
+
+            /* ========== РАДИО-КНОПКИ ========== */
+            QRadioButton {
+                color: #ecf0f1;
+                font-size: 13px;
+            }
+        """
+
     
     def apply_normal_style(self, ui):
         """Применение обычного стиля"""
         ui.setStyleSheet(self.styles['normal'])
-        self.normalize_button_size(ui)
+        self._show_all_elements(ui)
+        self._set_button_size(ui, self.main_control_buttons, width=60, height=30)
+        self._set_button_size(ui, self.functional_buttons, width=70, height=30)
 
-    def apply_simple_style(self, ui):
+    def apply_adaptive_style(self, ui):
         """Применение упрощенного стиля"""
-        ui.setStyleSheet(self.styles['simple'])
-        self.hide_non_essential_elements(ui)
+        ui.setStyleSheet(self.styles['adaptive'])
+        self._hide_non_essential_elements(ui)
+        self._set_button_size(ui, self.main_control_buttons, width=100, height=50)
+        self._set_button_size(ui, self.functional_buttons, width=80, height=36)
 
-    def apply_contrast_style(self, ui):
-        """Применение контрастного стиля"""
-        ui.setStyleSheet(self.styles['contrast'])
-        self.hide_non_essential_elements(ui)
 
-    def hide_non_essential_elements(self,ui):
+    def _hide_non_essential_elements(self,ui):
         """Скрытие ненужных элементов"""
         # Пример скрытия ненужных элементов
-        if hasattr(ui,'pushButton_22'):
-            ui.pushButton_22.hide()
-        if hasattr(ui, 'pushButton_23'):
-            ui.pushButton_23.hide()
-        if hasattr(ui, 'pushButton_24'):
-            ui.pushButton_24.hide()
+        for btn_name in self.non_essential_buttons:
+            if hasattr(ui, btn_name):
+                getattr(ui, btn_name).hide()
         
-        # Увеличиваем основные кнопки
-        self.increase_button_size(ui)
+    def _show_all_elements(self, ui):
+        """Показывает все элементы (возврат к нормальному режиму)."""
+        for btn_name in self.non_essential_buttons:
+            if hasattr(ui, btn_name):
+                getattr(ui, btn_name).show()
 
-    def increase_button_size(self, ui):
-        """Увеличение размера основных кнопок"""
-        buttons_names = ['XForwardButton','XBackwardButton', 
-                         'YForwardButton', 'YBackwardButton', 
-                         'ZForwardButton', 'ZBackwardButton', 
-                         'AForwardButton', 'ABackwardButton', 
-                         'BForwardButton', 'BBackwardButton', 
-                         'CForwardButton', 'CBackwardButton']
 
-        for name in buttons_names:
+    def _set_button_size(self, ui, button_names, width, height):
+        """Устанавливает минимальный размер для указанных кнопок."""
+        for name in button_names:
             if hasattr(ui, name):
-                button = getattr(ui, name)
-                button.setMinimumSize(80,40)
-
-    def normalize_button_size(self, ui):
-        """Востановление размера основных кнопок"""
-        buttons_names = ['XForwardButton','XBackwardButton', 
-                         'YForwardButton', 'YBackwardButton', 
-                         'ZForwardButton', 'ZBackwardButton', 
-                         'AForwardButton', 'ABackwardButton', 
-                         'BForwardButton', 'BBackwardButton', 
-                         'CForwardButton', 'CBackwardButton']
-
-        for name in buttons_names:
-            if hasattr(ui, name):
-                button = getattr(ui, name)
-                button.setMinimumSize(40,40)
-                
-    def adjust_for_fatigue_level(self, ui, fatigue_level):
-        """Настройка интерфейса в зависимости от уровня усталости"""
-        if fatigue_level >= 8:
-            self.apply_normal_style(ui)
-        elif fatigue_level >= 5:
-            self.apply_simple_style(ui)
-        else:
-            self.apply_contrast_style(ui)
+                btn = getattr(ui, name)
+                btn.setMinimumSize(width, height)
