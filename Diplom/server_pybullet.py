@@ -4,9 +4,9 @@ import json
 import time
 from threading import Thread
 import logging
+
 from main_simulation import KukaRobot
 from database import Database
-
 from time_controller import now
 
 logging.basicConfig(level=logging.INFO)
@@ -102,7 +102,7 @@ class PybulletServer:
                     'command':'move_joint',
                     'success': success,
                     'message': log_msg,
-                    'timestamp': time.time()
+                    'timestamp': now()
                 }
 
             elif command == 'reset_positions':
@@ -112,7 +112,7 @@ class PybulletServer:
                     'command':'reset_positions',
                     'success': True,
                     'message': 'Positions have been reset',
-                    'timestamp': time.time()
+                    'timestamp': now()
                 }
             
             elif command == 'start_automatic_mode':
@@ -126,7 +126,7 @@ class PybulletServer:
                     'success': success,
                     'message': log_msg,
                     'point_count': len(points),
-                    'timestamp': time.time()
+                    'timestamp': now()
                 }
             
             elif command == 'stop_automatic_mode':
@@ -137,7 +137,7 @@ class PybulletServer:
                     'command':'stop_automatic',
                     'success': success,
                     'message': log_msg,
-                    'timestamp': time.time()
+                    'timestamp': now()
                 }
                 
             elif command == 'set_adaptive_mode':
@@ -149,7 +149,7 @@ class PybulletServer:
                     'success': True,
                     'message': 'Adaptive mode has been set',
                     'adaptive_mode': self.adaptive_mode,
-                    'timestamp': time.time()
+                    'timestamp': now()
                 }
                 
                 logger.info(f"Adaptive mode: {self.adaptive_mode}, Speed mode: {self.speed_mode}")
@@ -159,7 +159,7 @@ class PybulletServer:
                 response={
                     'type': 'error',
                     'message': 'Unknown command',
-                    'timestamp': time.time()
+                    'timestamp': now()
                 }
             
             await websocket.send(json.dumps(response))

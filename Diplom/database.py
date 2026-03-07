@@ -36,6 +36,7 @@ class Database:
             id integer PRIMARY KEY AUTOINCREMENT,
             timestamp DATETIME,
             fatigue_level integer CHECK(FATIGUE_LEVEL >= 0 AND FATIGUE_LEVEL <= 10),
+            concentration_level integer CHECK(FATIGUE_LEVEL >= 0 AND FATIGUE_LEVEL <= 10),
             hour_of_day integer,
             day_of_week integer
             )
@@ -113,15 +114,15 @@ class Database:
         logger.info(f"Survey scheduler started with interval {self.survey_interval}s")
 
 
-    def save_survey(self, fatigue_level: int):
+    def save_survey(self, fatigue_level: int, concentration_level: int):
         cursor = self.connection.cursor()
         current_time = now()
 
         cursor.execute("""
-            INSERT INTO Survey_response (timestamp, fatigue_level, hour_of_day, day_of_week)
-            values(?,?,?,?)
+            INSERT INTO Survey_response (timestamp, fatigue_level, concentration_level, hour_of_day, day_of_week)
+            values(?,?,?,?,?)
         """,
-            (current_time, fatigue_level, current_time.hour, current_time.weekday()))
+            (current_time, fatigue_level, concentration_level,current_time.hour, current_time.weekday()))
         self.connection.commit()
        
         self._update_survey_interval()
@@ -194,12 +195,17 @@ class Database:
     def get_training_data(self, limit: int= 1000):
         cursor = self.connection.cursor()
         cursor.execute("""
-            SELECT hour_of_day, day_of_week, fatigue_level
+            SELECT hour_of_day, day_of_week, fatigue_level, concentration_level 
             FROM Survey_response
             ORDER BY timestamp DESC
             LIMIT ?
             """, (limit,))  
         return cursor.fetchall()
+    
+    def get_survey_count(self):
+        cursor = self.connection.cursor()
+        cursor.execute("SELECT COUNT(*) FROM survey_response")
+        return cursor.fetchone()[0]
     
     def log_ml_prediction(self, features:dict, prediction:bool,
                         coffidence:float, threshold_used:float,

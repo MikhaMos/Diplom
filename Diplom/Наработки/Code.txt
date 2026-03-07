@@ -1,4 +1,5 @@
-main_app:
+Main.app:
+
 import sys
 import os
 from PySide6 import QtUiTools
@@ -11,7 +12,7 @@ import json
 import asyncio
 import threading
 
-from time_controller import now
+from time_controller import now, time_controller
 
 from database import Database
 from client_App_pybullet import PyBulletClient
@@ -272,6 +273,14 @@ class MainWindow(QMainWindow):
         fatigue_level = select_id 
         self.db.save_survey(fatigue_level)
 
+        # Сохраняем опрос в лог
+        self.db.log_command(
+            source='main_app',
+            command='submit_survey',
+            parameters=f"fatigue_level={fatigue_level}",
+            success=True
+        )
+
         # Обновляем состояние
         self.current_fatigue_level = fatigue_level
         self.survey_answered = True
@@ -447,9 +456,6 @@ class MainWindow(QMainWindow):
     def update_time(self):
         current_time = now().strftime( "%H:%M:%S")
         self.ui.TimeLabel.setText(current_time)
-        if not hasattr(self, '_last_time') or self._last_time != current_time:
-            self.ui.TimeLabel.setText(current_time)
-            self._last_time = current_time
 
     def log_message(self, message):
         #Логирование сообщений в интерфейс
@@ -466,7 +472,7 @@ class MainWindow(QMainWindow):
         
         if hasattr(self, 'db'):
             self.db.close()
-
+        QApplication.processEvents()
         event.accept()
 
 def main():
@@ -477,6 +483,1724 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+client_App_ml:
+import websockets
+import asyncio
+import json
+from database import Database
+import logging
+
+from typing import Optional,Dict,Any, List
+import threading
+from threading import Thread
+from PySide6.QtCore import Signal, QObject
+
+from time_controller import now 
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+class MLClient(QObject):
+    connected = Signal()
+    disconnected = Signal()
+    predictions_received = Signal(dict)
+    error_occurred = Signal(str)
+
+    def __init__(self, uri: str = "ws://localhost:8766", prediction_interval: float = 60.0):
+        super().__init__()
+        self.uri = uri
+        self.websocket: Optional[websockets.WebSocketClientProtocol] = None
+        self.running = False
+        self.db = Database()
+        self.loop: Optional[asyncio.AbstractEventLoop] = None
+        self.prediction_interval = prediction_interval
+        self.last_prediction: Optional[Dict[str, Any]] = None
+
+        self._reconnect_attempts = -1 # -1 - бесконечно
+        self._reconnect_delay = 1 # начальная задержка
+        self._max_reconnect_delay = 60 # максимальная задержка
+        self._reconnect_task: Optional[asyncio.Task]  = None 
+        self._monitor_task: Optional[asyncio.Task] = None
+
+    
+    async def _monitor_predictions(self):
+        while self.websocket and self.running:
+            try:
+                await self.get_prediction_async()
+                await asyncio.sleep(self.prediction_interval)
+            except Exception as e:
+                logger.error(f"Error while monitoring predictions: {e}")
+                self.error_occurred.emit(str(e))
+                raise
+    
+    async def get_prediction_async(self, timestamp = None) -> Dict[str, Any]:
+        if not self.websocket or not self.running:
+            raise ConnectionError("Not connected to server")
+        try:
+            if timestamp is None:
+                timestamp = now()
+            message = {
+                "command": "predict",
+                "timestamp": timestamp.isoformat()
+                }
+            await self.websocket.send(json.dumps(message))
+            response = await self.websocket.recv()
+            result  = json.loads(response)
+
+            if result.get('type') == 'prediction':
+                self.last_prediction = result
+
+                features = {
+                    'hour': timestamp.hour,
+                    'day_of_week': timestamp.weekday
+                }
+
+                self.db.log_ml_prediction(
+                                    features=features,
+                                    prediction=result.get('prediction'),
+                                    coffidence=result.get('confidence'),
+                                    threshold_used=result.get('threshold',0.8),
+                                    adaptation_triggered=result.get('requires_adaptation',False)
+                                    )
+
+                self.predictions_received.emit(result)
+            return result
+        
+        except Exception as e:
+            logger.error(f"Error while getting prediction: {e}")
+            raise
+
+    async def should_adapt_interface(self):
+        """Определяет, нужно ли адаптировать интерфейс"""
+        if not self.last_prediction:
+            await self.get_prediction_async()
+
+        return self.last_prediction.get('requires_adaptation', False)
+    
+    async def get_adaptation_level(self):
+        """Возвращает уровень адаптации (0.0-1.0)"""
+        if not self.last_prediction:
+            await self.get_prediction_async()
+
+        confidence = self.last_prediction.get('confidence', 0.0)
+        threshold = self.last_prediction.get('threshold', 0.8)
+
+        if confidence <= threshold:
+            return 0.0
+        else:
+            return min(1.0, (confidence-threshold)/(1.0-threshold))
+
+    async def send_training_data_async(self, X:List, y:List):
+         """Отправляет данные для дообучения модели"""
+         if not self.websocket or not self.running:
+            raise ConnectionError("Not connected to server")
+         try:
+            message = {
+                "command": "retrain",
+                "X": X,
+                "y": y
+                }
+            await self.websocket.send(json.dumps(message))
+            response = await self.websocket.recv()
+            result  = json.loads(response)
+            return result
+        
+         except Exception as e:
+            logger.error(f"Error while sending training data: {e}")
+            raise
+    
+    def start(self):
+        self.loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(self.loop)
+        self.running = True
+        try:
+            self._reconnect_task=self.loop.create_task(self._run_reconnecting())
+            self.loop.run_until_complete(self._reconnect_task)
+        except Exception as e:
+            logger.error(f"Error while starting client: {e}")
+        finally:
+            if self.loop and not self.loop.is_closed():
+                tasks= asyncio.all_tasks(self.loop)
+                for task in tasks:
+                    task.cancel()
+                self.loop.run_until_complete(asyncio.gather(*tasks,return_exceptions=True))
+                self.loop.close()
+                logger.info("Client event loop stopped")
+        
+    async def _run_reconnecting(self):
+        while self.running:
+            try:
+                await self._connect_with_retry()
+                await self._run_connected()
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                logger.error(f"Connection error in main loop: {e} ")
+                self.error_occurred.emit(str(e))
+                if self.running:
+                    await asyncio.sleep(self._reconnect_delay)
+            finally:
+                await self._close_connection()
+
+    async def _connect_with_retry(self):
+        attempt = 0
+        while self.running:
+            try:
+                self.websocket = await websockets.connect(self.uri)
+                logger.info(f"Connected to {self.uri}")
+                self.db.log_command("ml", "connect", f"uri: {self.uri}", True)
+                self.connected.emit()
+                return
+            except Exception as e:
+                logger.warning(f"Connection attempt {attempt+1} failed: {e}")
+                if self._reconnect_attempts != -1 and attempt >= self._reconnect_attempts:
+                    raise # Превышено количество попыток
+                delay =  min(self._reconnect_delay*(2**attempt), self._max_reconnect_delay)
+                attempt += 1
+                await asyncio.sleep(delay)
+
+    async def _run_connected(self):
+        self._monitor_task = self.loop.create_task(self._monitor_predictions())
+        try:
+            await self._monitor_task
+        except asyncio.CancelledError:
+            pass
+        except Exception as e:
+            logger.error(f"Monitor task failed: {e}")
+            raise
+    
+    async def _close_connection(self):
+        if self.websocket:
+            await self.websocket.close()
+            self.websocket = None
+            logger.info("Disconnected from server")
+            self.disconnected.emit()
+
+    def run_in_thread(self):
+        thread = threading.Thread(target=self.start, daemon=True)
+        thread.start()
+        return thread
+
+    def get_prediction(self):
+        """Запрашивает предсказание из главного потока"""
+        if not self.running or not self.loop or self.loop.is_closed():
+            logger.warning("Cannot get prediction: client not running")
+            return
+        
+        asyncio.run_coroutine_threadsafe(
+            self.get_prediction_async(),
+            self.loop
+        )
+
+    def send_training_data(self, X: list, y: list):
+        """Отправляет данные для обучения из главного потока"""
+        if not self.running or not self.loop or self.loop.is_closed():
+            logger.warning("Cannot send training data: client not running")
+            return
+        
+        asyncio.run_coroutine_threadsafe(
+            self.send_training_data_async(X, y),
+            self.loop
+        )
+
+    def stop(self):
+        self.running=False
+        if self.loop and self.loop.is_running():
+            asyncio.run_coroutine_threadsafe(self._shutdown(), self.loop)
+        
+    async def _shutdown(self):
+        if self._reconnect_task and not self._reconnect_task.done():
+            self._reconnect_task.cancel()
+            try:
+                await self._reconnect_task
+            except asyncio.CancelledError:
+                pass
+        if self._monitor_task and not self._monitor_task.done():
+            self._monitor_task.cancel()
+            try:
+                await self._monitor_task
+            except asyncio.CancelledError:
+                pass
+        await self._close_connection()
+    
+client_App_pybullet:
+import websockets
+import asyncio
+import json
+import logging
+import threading 
+from typing import Optional,Dict,Any
+from database import Database
+from PySide6.QtCore import Signal, QObject
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+class PyBulletClient(QObject):
+
+    connected = Signal()
+    disconnected = Signal()
+    positions_received = Signal(dict)
+    error_occurred = Signal(str)
+    command_response = Signal(str)
+
+    def __init__(self, uri: str ="ws://localhost:8765"):
+        super().__init__()
+        self.uri = uri
+        self.websocket: Optional[websockets.WebSocketClientProtocol] = None
+        self.running =False
+        self.loop: Optional[asyncio.AbstractEventLoop] = None
+        self.db = Database()
+
+        self._reconnect_attempts = -1 # -1 - бесконечно
+        self._reconnect_delay = 1 # начальная задержка
+        self._max_reconnect_delay = 60 # максимальная задержка
+        self._reconnect_task: Optional[asyncio.Task]  = None 
+        self._monitor_task: Optional[asyncio.Task] = None
+
+    async def connect_async(self):
+        try: 
+            self.websocket=await websockets.connect(self.uri)
+            self.running =True
+            logger.info(f"connect to {self.uri}")
+            
+            self.connected.emit()
+            
+            self.db.log_command("pybullet", "connect", f"uri: {self.uri}", True)
+
+            # Запускаем мониторинг позиций
+            asyncio.create_task(self._monitor_positions())
+
+        except Exception as e:
+            logger.error(f"Error while connecting: {e}")
+            self.db.log_command("pybullet", "connect", f"uri: {self.uri}", False)
+            raise
+    
+    async def _monitor_positions(self):
+        try:
+            async for message in self.websocket:
+                data =json.loads(message)
+                if data.get('type') == 'positions':
+                    positions = {
+                        'JointPositions':data.get('JointPositions',), 
+                        'FramePositions':data.get('FramePositions'),
+                        'End_effector_Orientation':data.get('End_effector_Orientation'),
+                        }
+                    self.positions_received.emit(positions)
+                else:
+                    response=data.get('message')
+                    
+                    self.command_response.emit(response)
+        except Exception as e:
+            logger.error(f"Error while monitoring positions: {e}")
+            self.error_occurred.emit(str(e))
+            raise
+            
+                
+                
+    async def send_command_async(self, command: str, **kwargs) -> dict[str, Any]:
+        # Отправляет команду на сервер симуляции
+        if not self.websocket or not self.running:
+            raise ConnectionError("Not connected to server")
+        try:
+            message = {"command": command, **kwargs}
+            await self.websocket.send(json.dumps( message))
+            logger.info(f"Sending command: {message}")
+
+            params_str = json.dumps(kwargs) if kwargs else {}
+
+            self.db.log_command("send_pybullet_client", command, params_str, True)
+
+        except Exception as e:
+            logger.error(f"Error while sending command: {e}")
+            self.db.log_command("pybullet_client", command, json.dumps(kwargs), False)
+            raise
+        
+    async def disconnect_async(self):
+        if self.websocket:
+            await self.websocket.close()
+            self.running=False
+            self.disconnected.emit()
+            logger.info("Disconnected from server")
+
+    def start(self):
+        self.loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(self.loop)
+        self.running=True
+        try:
+            self._reconnect_task=self.loop.create_task(self._run_reconnecting())
+            self.loop.run_until_complete(self._reconnect_task)
+        except Exception as e:
+            logger.error(f"Error while starting client: {e}")
+        finally:
+            # Очистка при завершении
+            if self.loop and not self.loop.is_closed():
+                if self.loop.is_running():
+                    self.loop.stop()
+                # Завершаем все задачи
+                tasks = asyncio.all_tasks(self.loop)
+                if tasks:
+                    for task in tasks:
+                        if not task.done():
+                            task.cancel()
+                    # Даем задачам время на завершение
+                    self.loop.run_until_complete(
+                        asyncio.gather(*tasks, return_exceptions=True)
+                    )
+                self.loop.close()
+            self.loop = None
+            logger.info("Client event loop stopped")
+
+    async def _run_reconnecting(self):
+        while self.running:
+            try:
+                await self._connect_with_retry()
+                await self._run_connected()
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                logger.error(f"Connection error in main loop: {e} ")
+                self.error_occurred.emit(str(e))
+                if self.running:
+                    await asyncio.sleep(self._reconnect_delay)
+            finally:
+                await self._close_connection()
+
+    async def _connect_with_retry(self):
+        """Пытается подключиться с экспоненциальной задержкой"""
+        attempt = 0
+        while self.running:
+            try:
+                self.websocket = await websockets.connect(self.uri)
+                logger.info(f"Connected to {self.uri}")
+                self.db.log_command("pybullet", "connect", f"uri: {self.uri}", True)
+                self.connected.emit()
+                return
+            except Exception as e:
+                logger.warning(f"Connection attempt {attempt+1} failed: {e}")
+                if self._reconnect_attempts != -1 and attempt >= self._reconnect_attempts:
+                    raise # Превышено количество попыток
+                delay =  min(self._reconnect_delay*(2**attempt), self._max_reconnect_delay)
+                attempt += 1
+                await asyncio.sleep(delay)
+
+    async def _run_connected(self):
+        """Запускаем мониторинг и ждет его завершения"""
+        self._monitor_task = asyncio.create_task(self._monitor_positions())
+        try:
+            await self._monitor_task
+        except asyncio.CancelledError:
+            #Штатная остановка 
+            pass
+        except Exception as e:
+            logger.error(f"Monitor task failed: {e}")
+            raise
+
+    async def _close_connection(self):
+        if self.websocket:
+            await self.websocket.close()
+            self.websocket = None
+            self.disconnected.emit()
+            logger.info("Disconnected from server")
+
+
+    def run_in_thread(self):
+        thread = threading.Thread(target=self.start, daemon=True)
+        thread.start()
+        return thread
+    
+    def send_command(self, command: str, **kwargs):
+        """Отправляет команду из главного потока"""
+        if not self.running or not self.loop or self.loop.is_closed():
+            logger.warning("Cannot send command: client not running")
+            return
+        
+        # Используем thread-safe вызов
+        asyncio.run_coroutine_threadsafe(
+            self.send_command_async(command, **kwargs),
+            self.loop
+        )
+    
+    def stop(self):
+        self.running=False
+        if self.loop and self.loop.is_running():
+            asyncio.run_coroutine_threadsafe(self._shutdown(), self.loop)
+
+    async def _shutdown(self):
+        """Корутина для корректной остановки клиента"""
+        # Отменяем задачу переподключения
+        if self._reconnect_task and not self._reconnect_task.done():
+            self._reconnect_task.cancel()
+            try:
+                await self._reconnect_task
+            except asyncio.CancelledError:
+                pass
+
+        #Отменяем мониторинг
+        if self._monitor_task and not self._monitor_task.done():
+            self._monitor_task.cancel()
+            try:
+                await self._monitor_task
+            except asyncio.CancelledError:
+                pass
+
+        # Закрываем соединение
+        await self._close_connection()
+
+database:
+import sqlite3
+from datetime import timedelta
+import os
+from typing import List, Optional, Dict, Any
+import threading 
+import json
+import logging
+
+from time_controller import now
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+class Database:
+    def __init__(self, db_name="adaptive_robot.db"):
+        current_dir = os.path.dirname(os.path.abspath(__file__))
+        db_path = os.path.join(current_dir, db_name)
+        self.db = db_path
+        self.connection = sqlite3.connect(db_path, check_same_thread=False)
+        self.connection.row_factory = sqlite3.Row  # возвращает словари вместо кортежей 
+        self.create_tables()
+
+        # Таймер для управления частотой опросов
+        self.survey_timer = None
+        self.survey_interval = 30*60
+        self.survey_callback = None
+        self.survey_thread = None
+
+
+    def create_tables(self):
+        cursor = self.connection.cursor()
+
+        # Таблица для опросов
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS survey_response (
+            id integer PRIMARY KEY AUTOINCREMENT,
+            timestamp DATETIME,
+            fatigue_level integer CHECK(FATIGUE_LEVEL >= 0 AND FATIGUE_LEVEL <= 10),
+            hour_of_day integer,
+            day_of_week integer
+            )
+        """)
+
+        # Таблица для телеметрии
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS robot_telemetry(
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                timestamp DATETIME not null,
+                positions TEXT,
+                velocity REAL,
+                adaptive_mode TEXT
+                )
+        """)
+
+        # Таблица для логов команд
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS command_log(
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                timestamp DATETIME not null,
+                source TEXT,
+                command TEXT,
+                parameters TEXT,
+                success BOOLEAN
+                )
+        """)
+
+        # Таблица для ML
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS ml_predictions(
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                timestamp DATETIME not null,
+                hour_of_day INTEGER,
+                day_of_week INTEGER,
+                features TEXT, 
+                prediction boolean, 
+                confidence REAL,
+                threshold_used REAL, 
+                adaptation_triggered boolean
+                )
+        """)
+
+        # JSON с признаками
+            # Предсказание (уставший/не уставший)
+            # Уверенность модели (0.0-1.0)
+            # Порог, который использовался
+            # Была ли запущена адаптация
+        self.connection.commit()
+
+    def start_survey_scheduler(self,callback):
+        """Запускает планировщик опросов в отдельном потоке"""
+        self.survey_callback = callback
+        def survey_worker():
+            while True:
+                try:
+                    # Ждем интервал
+                    threading.Event().wait(self.survey_interval)
+                    # Вызываем callback в главном потоке
+                    if self.survey_callback:
+                        # Нужно будет вызвать через QTimer или QMetaObject.invokeMethod
+                        # Пока просто логируем
+                        
+                        logger.info("Survey time! (Need to trigger in main thread)")
+                        
+                        # Обновляем интервал на основе количества опросов
+                        self._update_survey_interval()
+                
+                except Exception as e:
+                    logger.error(f"Error while monitoring survey: {e}")
+                    raise
+        
+        self.survey_thread = threading.Thread(target=survey_worker, daemon=True)
+        self.survey_thread.start()
+        logger.info(f"Survey scheduler started with interval {self.survey_interval}s")
+
+
+    def save_survey(self, fatigue_level: int):
+        cursor = self.connection.cursor()
+        current_time = now()
+
+        cursor.execute("""
+            INSERT INTO Survey_response (timestamp, fatigue_level, hour_of_day, day_of_week)
+            values(?,?,?,?)
+        """,
+            (current_time, fatigue_level, current_time.hour, current_time.weekday()))
+        self.connection.commit()
+       
+        self._update_survey_interval()
+
+        return cursor.lastrowid
+    
+    def _update_survey_interval(self):
+        """Обновляет интервал опросов на основе количества данных"""
+        cursor = self.connection.cursor()
+        cursor.execute("SELECT COUNT(*) FROM survey_response")
+        count = cursor.fetchone()[0]
+        if count < 1440: # первый месяц
+            self.survey_interval_minutes = 30 # 30 мин
+        elif count <= 2880: # второй месяц
+            self.survey_interval_minutes = 60 # 1 час
+        else: # после второго месяца
+            self.survey_interval_minutes = 120 # 2 часа
+
+
+    def save_telemetry(self, positions: str, velocity:float, adaptive_mode: bool=False):
+        #Сохраняет телеметрию, поддерживая максимум 50 записей
+        cursor = self.connection.cursor()
+
+        # Удаляем старые записи, если больше 50
+        cursor.execute("SELECT COUNT(*) FROM robot_telemetry")
+        count = cursor.fetchone()[0]
+        if count > 50:
+            cursor.execute("""DELETE FROM robot_telemetry 
+            WHERE id IN( 
+                SELECT id FROM robot_telemetry
+                ORDER BY timestamp ASC
+                LIMIT ?
+            ) 
+            """, (count - 49,))
+        positions_json=json.dumps(positions)
+        # Вставляем новую запись
+        cursor.execute("""
+            INSERT INTO robot_telemetry 
+            (timestamp, positions, velocity, adaptive_mode)
+            values(?,?,?,?)
+        """,
+            (now(), positions_json, velocity, adaptive_mode))
+        self.connection.commit()
+    
+    def log_command(self, source: str, command: str, parameters: str, success: bool = True):
+        # Логирует команды межды компонентами
+        cursor = self.connection.cursor()
+
+        cursor.execute("SELECT COUNT(*) FROM command_log")
+        count_log = cursor.fetchone()[0]
+        if count_log > 300:
+            cursor.execute("""DELETE FROM command_log 
+            WHERE id IN( 
+                SELECT id FROM command_log
+                ORDER BY timestamp ASC
+                LIMIT ?
+            ) 
+            """, (count_log - 299,))
+
+        # Если parameters - это dict, преобразуем в строку
+        if isinstance(parameters, dict):
+            parameters = json.dumps(parameters)
+        cursor.execute("""
+            INSERT INTO command_log (timestamp, source, command, parameters, success)
+            values(?,?,?,?,?)
+        """,
+            (now().strftime("%Y-%m-%d %H:%M:%S"), source, command, parameters, success))
+        self.connection.commit()
+
+    def get_training_data(self, limit: int= 1000):
+        cursor = self.connection.cursor()
+        cursor.execute("""
+            SELECT hour_of_day, day_of_week, fatigue_level
+            FROM Survey_response
+            ORDER BY timestamp DESC
+            LIMIT ?
+            """, (limit,))  
+        return cursor.fetchall()
+    
+    def log_ml_prediction(self, features:dict, prediction:bool,
+                        coffidence:float, threshold_used:float,
+                        adaptation_triggered:bool):
+        """Логирует предсказание ML модели"""
+        cursor = self.connection.cursor()
+        features_json = json.dumps(features)
+        current_time = now()
+        cursor.execute("""
+            INSERT INTO ml_predictions (timestamp, hour_of_day, day_of_week, features, prediction, confidence, threshold_used, adaptation_triggered)
+            values(?,?,?,?,?,?,?,?)
+        """,
+            (current_time.strftime("%Y-%m-%d %H:%M:%S"), current_time.hour, current_time.weekday(), features_json, prediction, coffidence, threshold_used, adaptation_triggered))
+        self.connection.commit()
+
+    def stop_survey_scheduler(self):
+        """Останавливает планировщик опросов"""
+        if self.survey_thread and self.survey_thread.is_alive():
+            # Нет простого способа остановить, но поток daemon=True
+            # сам завершится при завершении программы
+            pass
+    
+    def close(self):
+        self.stop_survey_scheduler()
+        if self.connection:
+            self.connection.close()
+
+main_simulation:
+import pybullet as p
+import pybullet_data
+import time
+import json
+import math
+import numpy as np
+from threading import Thread, Lock
+import logging
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+class KukaRobot:
+    def __init__(self, gui=True):
+        self.gui = gui
+        self.physics_client = None
+        self.robot_id=None
+        self.joint_indices = []
+        self.joint_limits = []
+        self.current_positions = [0.0] * 6
+        self.current_FramePos = [0.0]*3
+        self.current_orientation = [0.0, 0.0, 0.0, 1.0] # [x,y,z,w]
+        
+
+        self.is_running=True
+
+        # Для обратной кинематики
+        self.ik_tolerance = 0.01 #допуск ошибки
+        self.max_ik_iterations = 300 #максимальное количество итераций
+        self.end_effector_link_index = 6
+
+        # Для автоматичекого режима
+        self.automatic_mode = False
+        self.automatic_thread = None
+        self.automatic_lock = Lock()
+        self.target_points = []
+        self.target_orientations = []
+        self.current_point_index = 0
+        self.loop_enabled = True
+
+        # Ограничения SSM зоны радиус
+        self.ssm_zones= {
+            'normal': {
+                'inner':2.5,
+                'outer':4
+            },
+            'restricted': {
+                'inner':4,
+                'outer':6
+            }
+        }
+        self.current_ssm_mode = 'normal'
+        self.current_speed_mode = 'full'
+
+        self.robot_speeds = {
+            'automatic':{
+                'full':0.8,  # Полная скорость (зеленая/синяя зона)
+                'reduced':0.48 # Пониженная скорость (желтая/фиолетовая зона)
+            },
+            'manual':{
+                'full':0.6,  # Полная скорость (зеленая/синяя зона)
+                'reduced':0.36 # Пониженная скорость (желтая/фиолетовая зона)
+            }
+        }
+        self.zone_visuals = {
+            'outer':None, # Внешняя зона (желтая/фиолетовая)
+            'inner':None # Внутренняя зона (зеленая/синяя)
+        }
+        self.human_id=None
+
+    def connect(self):
+        if self.gui:
+            self.physics_client = p.connect(p.GUI)
+            p.configureDebugVisualizer(p.COV_ENABLE_GUI, 0)
+        else:
+            self.physics_client = p.connect(p.DIRECT)
+
+        p.setAdditionalSearchPath(pybullet_data.getDataPath())
+        p.setGravity(0,0,-9.8)
+
+        plane_id=p.loadURDF("plane.urdf")
+        #Стол
+        table_pos = [0.0, 0.0, 0.0]
+        table_ori = p.getQuaternionFromEuler([0, 0, 0])
+        self.table_id = p.loadURDF("table/table.urdf", table_pos, table_ori)  
+        # конечное место работы
+        table_square_pos = [-1.3, -0.4, 0.0]
+        table_square_ori = p.getQuaternionFromEuler([0, 0, 0])
+        self.table_square_id = p.loadURDF("table_square/table_square.urdf", 
+                                          table_square_pos, 
+                                          table_square_ori) 
+        #Робот
+        robot_start_pos =[-0.5,0,0.6]
+        robot_start_ori = p.getQuaternionFromEuler([0,0,0])
+        self.robot_id = p.loadURDF("kuka_iiwa/model.urdf",
+                                   robot_start_pos,
+                                   robot_start_ori,
+                                   useFixedBase=True)
+        #человек
+        human_start_pos = [-3.5,0,1.1]
+        human_start_ori = p.getQuaternionFromEuler([1.5,0,0])
+        self.human_id = p.loadURDF("humanoid/humanoid.urdf",
+                                   human_start_pos,
+                                   human_start_ori,
+                                   useFixedBase=True,
+                                   globalScaling=0.3)
+        
+        self.create_objects()
+
+        self._init_joints()
+
+        self.visualize_ssm_zones()
+
+        self.sim_thread = Thread(target=self._simulation_loop, daemon=True)
+        self.sim_thread.start()
+
+        return True
+
+    def create_objects(self):
+        """Create objects in the environment"""
+        cube_size = 0.05
+        cube_mass = 0.1
+
+        cube_positions = [
+            [0.3,0.3,0.7],
+            [-0.3,0.3,0.7],
+            [0.3, -0.3, 0.7],
+            [-0.3, -0.3, 0.7]
+        ]
+
+        self.cubes = []
+
+        for pos in cube_positions:
+            cube_shape = p.createCollisionShape(p.GEOM_BOX, halfExtents=[cube_size]*3)
+            cube_visual_shape = p.createVisualShape(p.GEOM_BOX, halfExtents=[cube_size]*3, rgbaColor=[0.8,0.2,0.2,1])
+            cube_id = p.createMultiBody(cube_mass, 
+                                        cube_shape, 
+                                        cube_visual_shape, 
+                                        basePosition=pos)
+            self.cubes.append(cube_id)
+            
+    def _init_joints(self):
+        num_joints = p.getNumJoints(self.robot_id)
+        self.joint_indices=[]
+        self.joint_limits=[]
+
+        for i in range(num_joints):
+            joint_info = p.getJointInfo(self.robot_id, i)
+            if joint_info[2] == p.JOINT_REVOLUTE:
+                self.joint_indices.append(i)
+                self.joint_limits.append((joint_info[8], joint_info[9]))
+                print("Joint Name: ", joint_info[1], "Joint Type: ", joint_info[2])
+
+        self.joint_indices = self.joint_indices[:6]
+        self.joint_limits = self.joint_limits[:6]
+
+
+        logger.info(f"Robot initialized with {len(self.joint_indices)} joints")
+        logger.info(f"Joint limits: {self.joint_limits}")
+    
+    def _simulation_loop(self):
+        while self.is_running:
+
+            p.stepSimulation()
+            self._update_positions()
+            self._check_human_position()
+            time.sleep(1/240)
+    
+    def _update_positions(self):
+        for i, joint_idx in enumerate(self.joint_indices):
+            joint_state = p.getJointState(self.robot_id, joint_idx)
+            self.current_positions[i] = joint_state[0]
+        self.end_effector_link_state = p.getLinkState(self.robot_id, self.end_effector_link_index)
+        self.current_FramePos = list(self.end_effector_link_state[0])
+        self.current_orientation = list(self.end_effector_link_state[1])
+        
+    def visualize_ssm_zones(self):
+        for key in self.zone_visuals:
+            if self.zone_visuals[key] is not None:
+                p.removeBody(self.zone_visuals[key])
+                self.zone_visuals[key] = None
+                
+        # Получаем позицию базы робота
+        robot_pos,_= p.getBasePositionAndOrientation(self.robot_id)
+        zones = self.ssm_zones[self.current_ssm_mode]
+
+
+        if self.current_ssm_mode == 'normal':
+            inner_color=[1,1,0,0.18] # Желеный, полупрозрачный]
+            outer_color=[0,1,0,0.18] # Зеленый, полупрозрачный
+            inner_radius = zones['inner']
+            outer_radius = zones['outer']
+        else:
+            inner_color=[1,0,1,0.10] # Финий, полупрозрачный]
+            outer_color=[0,0,1,0.10] # Сиолетовый, полупрозрачный
+            inner_radius = zones['inner']
+            outer_radius = zones['outer']
+
+        inner_visual_shape =  p.createVisualShape(
+            p.GEOM_SPHERE, 
+            radius=inner_radius, 
+            rgbaColor=inner_color
+            ) 
+        inner_collision_shape = p.createCollisionShape(
+            p.GEOM_SPHERE, 
+            radius=inner_radius
+            )
+        self.zone_visuals['inner'] = p.createMultiBody(
+            0,
+            inner_collision_shape,
+            inner_visual_shape,
+            basePosition=robot_pos
+        )
+        p.setCollisionFilterGroupMask(self.zone_visuals['inner'],-1,0,0)
+        p.changeVisualShape(self.zone_visuals['inner'],-1,rgbaColor=inner_color)
+
+        outer_visual_shape =  p.createVisualShape(
+            p.GEOM_SPHERE,
+            radius=outer_radius,
+            rgbaColor=outer_color
+        )
+        outer_collision_shape = p.createCollisionShape(
+            p.GEOM_SPHERE,
+            radius=outer_radius
+        )
+        self.zone_visuals['outer'] = p.createMultiBody(
+            0,
+            outer_collision_shape,
+            outer_visual_shape,
+            basePosition=robot_pos
+        )
+        p.setCollisionFilterGroupMask(self.zone_visuals['outer'],-1,0,0)
+        p.changeVisualShape(self.zone_visuals['outer'],-1,rgbaColor=outer_color)
+        
+        logger.info(f"SSM zones visualized: mode={self.current_ssm_mode}, inner={inner_radius}, outer={outer_radius}")
+        
+        
+    async def set_adaptive_mode(self, adaptive_mode, speed_mode_type):
+        if adaptive_mode:
+            ssm_zone_type = 'restricted'
+        else:
+            ssm_zone_type = 'normal'
+        if ssm_zone_type in self.ssm_zones.keys():
+            self.current_ssm_mode = ssm_zone_type
+            self.visualize_ssm_zones()
+            logger.info(f"Workspace changed to {ssm_zone_type}")
+            self.current_speed_mode = speed_mode_type
+            return True
+        return False
+    
+    def _check_human_position(self):
+        #Проверка расстояния между роботом и человеком
+        if not self.human_id:
+            return 
+        
+        robot_pos,_= p.getBasePositionAndOrientation(self.robot_id)
+        human_body_pos,_ = p.getBasePositionAndOrientation(self.human_id)
+
+        dx = human_body_pos[0] - robot_pos[0]
+        dy = human_body_pos[1] - robot_pos[1]
+        dz = human_body_pos[2] - robot_pos[2] # игнорируем
+        distance = math.sqrt(dx*dx + dy*dy)
+
+        old_mode = self.current_ssm_mode
+        old_speed_mode = self.current_speed_mode
+
+        if distance < self.ssm_zones[self.current_ssm_mode]['outer'] and distance > self.ssm_zones[self.current_ssm_mode]['inner']:
+            #человек внутри зеленой зоны - полная рабочая скорость
+            self.current_speed_mode = 'full'
+        elif distance < self.ssm_zones[self.current_ssm_mode]['inner']:
+            #человек внутри желтой зоны - половина рабочей скорости
+            self.current_speed_mode = 'reduced'
+        elif distance > self.ssm_zones[self.current_ssm_mode]['outer']:
+            # человек вне зон
+            self.current_speed_mode = 'full'
+        # else человек у робота
+
+        self.automatic_move_speed = self.robot_speeds['automatic'][self.current_speed_mode]
+        self.manual_move_speed = self.robot_speeds['manual'][self.current_speed_mode]
+
+        if old_speed_mode != self.current_speed_mode:
+            logger.info(f"Speed mode changed to {self.current_speed_mode}")
+        if old_mode != self.current_ssm_mode:
+            logger.info(f"SSM mode changed to {self.current_ssm_mode}")
+
+    
+    def move_joint(self, joint_index, direction, step=0.1):
+        if 0 <= joint_index < len(self.joint_indices):
+            # проверяем не выдет ли ноовое положение за пределы рабочей зоны
+            current_pos = p.getJointState(self.robot_id, self.joint_indices[joint_index])[0]
+            new_pos = current_pos + (direction * step)
+
+            # Проверяем пределы сустава
+            lower, upper = self.joint_limits[joint_index]
+            new_pos = max(lower, min(new_pos, upper))
+
+            p.setJointMotorControl2(
+                self.robot_id,
+                self.joint_indices[joint_index],
+                p.POSITION_CONTROL,
+                targetPosition=new_pos,
+                force=800,
+                maxVelocity=self.manual_move_speed
+            )
+            return True, f"Joint {joint_index} moved to {new_pos:.3f}"
+        return False, f"Invalid joint index: {joint_index}"
+    
+    def get_joint_positions(self):
+        positions_deg = [pos * 180 / np.pi for pos in self.current_positions]
+        return {
+                'JointPositions': positions_deg,
+                'FramePositions':self.current_FramePos,
+                'End_effector_Orientation':self.current_orientation,
+                'velosity': self.automatic_move_speed if self.automatic_mode else self.manual_move_speed
+                }
+
+    def reset_positions(self):
+        for i, joint_idx in enumerate(self.joint_indices):
+            p.setJointMotorControl2(
+                self.robot_id,
+                joint_idx,
+                p.POSITION_CONTROL,
+                targetPosition=0.0,
+                force=800,
+                maxVelocity=self.automatic_move_speed
+            )
+
+    def calculate_inverse_kinematics(self, target_position, target_orientation): #target_orientation=None):
+        try:
+            
+            joint_positions = p.calculateInverseKinematics(
+                self.robot_id,
+                self.end_effector_link_index,
+                target_position,
+                targetOrientation=target_orientation,
+                lowerLimits=[lim[0] for lim in self.joint_limits],
+                upperLimits=[lim[1] for lim in self.joint_limits],
+                jointRanges=[lim[1] - lim[0] for lim in self.joint_limits],
+                restPoses = [0.0, -0.5, 0.0, 1.0, 0.0, 0.0],
+                maxNumIterations=self.max_ik_iterations,
+                residualThreshold=self.ik_tolerance
+            )
+
+            result = list(joint_positions[:len(self.joint_indices)])
+            for i, angle in enumerate(result):
+                lower,upper = self.joint_limits[i]
+                result[i] = max(lower, min(angle, upper))
+            
+            logger.info(f"Calculated joint positions successfully")
+            return result
+        except Exception as e:
+            logger.error(f"Error calculating inverse kinematics: {e}")
+            return None
+        
+    def move_to_point_ik(self, target_position,target_orientation):
+        try:
+
+            joint_angles = self.calculate_inverse_kinematics(target_position, target_orientation)
+            if joint_angles is None:
+                return False, "Failed to calculate inverse kinematics"
+
+            for i, joint_idx in enumerate(self.joint_indices):
+                    p.setJointMotorControl2(
+                        self.robot_id,
+                        joint_idx,
+                        p.POSITION_CONTROL,
+                        targetPosition=joint_angles[i],
+                        force=800,
+                        maxVelocity=self.automatic_move_speed
+                    )
+            start_time = time.time()
+            timeout = 10.0
+            position_tolerance = 0.03
+            #orientation_tolerance = 0.1
+        
+            while time.time() - start_time < timeout:
+                if self.automatic_mode == False:
+                    return False, "Automatic mode is off"
+                p.stepSimulation()
+                
+                current_state = p.getLinkState(self.robot_id, self.end_effector_link_index, computeForwardKinematics=True)
+                current_position = current_state[0]
+                current_orientation = current_state[1]
+                position_distance = np.linalg.norm(np.array(current_position) - np.array(target_position))
+                
+                # Считаем, что кватернионы уже нормализованы
+                #dot_product = np.abs(np.dot(current_orientation, target_orientation))
+                # Угол = 2 * arccos(dot_product), но для близости можно сравнивать dot_product с порогом
+                #orientation_ok = dot_product > np.cos(orientation_tolerance/2)
+
+                if position_distance < position_tolerance: #and orientation_ok: # Допуск 
+                    logger.info(f"Move to point IK completed in {time.time() - start_time:.3f} seconds")
+                    logger.debug(f"Point completed, distance: {position_distance:.3f}")
+                    return True, f"Point {target_position} completed"
+                time.sleep(0.05)
+            return False, f"Move to point IK timed out after {timeout} seconds"
+        
+        except Exception as e:
+            logger.error(f"Error moving to point with IK: {e}")
+            return False, str(e)
+
+    def start_automatic_mode(self,points,orientation,loop_programming = True):
+        with self.automatic_lock:
+            if self.automatic_mode:
+                return False
+            
+            if not points:
+                return False, "No points provided"
+            
+            self.target_points = points
+            self.target_orientations = orientation
+            self.current_point_index = 0
+            self.loop_enabled = loop_programming
+            self.automatic_mode = True
+
+            self.automatic_thread = Thread(target=self._automatic_mode_loop, daemon=True)
+            self.automatic_thread.start()
+
+            logger.info(f"Automatic mode started. Points: {len(self.target_points)}")
+            return  True,f'Automatic mode started. Points: {len(self.target_points)}'
+        
+    def stop_automatic_mode(self):
+        with self.automatic_lock:
+            if not self.automatic_mode:
+                return
+            self.automatic_mode = False
+            logger.info("Automatic mode stopped")
+        return True, f'Automatic mode stopped'
+    
+    def _automatic_mode_loop(self):
+        #Цикл автоматического управления
+        logger.info("Automatic mode loop started")
+        while self.automatic_mode and self.is_running:
+            try:
+                if self.automatic_mode == False:
+                    break
+                with self.automatic_lock:
+                    if not self.target_points or self.current_point_index >= len(self.target_points):
+
+                        if self.loop_enabled:
+                            self.current_point_index = 0
+                            logger.info("Looping to the first point")
+
+                        else:
+                            self.automatic_mode = False
+                            logger.info("Automatic mode stopped")
+                            break
+                    
+                    # получаем текущую точку
+                    target_point = self.target_points[self.current_point_index]
+                    target_orientation = self.target_orientations[self.current_point_index]
+
+                    # Преобразуем в массив
+                    if isinstance(target_point, list):
+                        target_point = np.array(target_point, dtype=np.float32)
+
+                    point_num = self.current_point_index + 1
+                    total_points = len(self.target_points)
+                    logger.info(f"Moving to point {point_num}/{total_points} ({target_point})")
+                    
+                    success, message = self.move_to_point_ik(target_point, target_orientation)
+                    if success:
+                        self.current_point_index += 1
+                        logger.info(f"Point {target_point} completed")
+                        time.sleep(0.5)
+                    else:
+                        logger.warning(f"Failed to move to point {target_point}: {message}")
+                        self.current_point_index += 1
+                        time.sleep(1)
+
+            except Exception as e:
+                logger.error(f"Error in automatic mode loop: {e}")
+
+    logger.info("Automatic mode loop stopped")
+        
+    def disconnect(self):
+        self.is_running = False
+        # Останавливаем автоматический режим
+        self.stop_automatic_mode()
+
+        #Ждем завершения потоков
+        if hasattr(self, 'automatic_thread') and self.automatic_thread:
+            self.automatic_thread.join(timeout=1.0)
+
+        if hasattr(self, 'sim_thread') and self.sim_thread:
+            self.sim_thread.join(timeout=1.0)
+        if self.physics_client is not None:
+            p.disconnect()
+
+if __name__ == "__main__":
+    robot = KukaRobot(gui=True)
+    robot.connect()
+    try:
+        while True:
+            time.sleep(1)
+    except KeyboardInterrupt:
+        robot.disconnect()
+                        
+
+ml_model:
+import numpy as np
+import pickle
+import os
+from typing import Tuple, Optional
+from sklearn.linear_model import LogisticRegression
+from sklearn.preprocessing import StandardScaler
+import logging
+
+from time_controller import now
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+class FatiguePredictor:
+    def __init__(self, model_path: str = "fatigue_model.pkl"):
+        self.model_path = model_path
+        self.model: Optional[LogisticRegression] = None
+        self.scaler = StandardScaler()
+        self.confidence_threshold = 0.8 # Порог уверенности для адаптации
+
+        if os.path.exists(model_path):
+            self.load_model()
+        else:
+            self.initialize_model()
+            # Если модель не найдена, создаем новую
+
+    
+    def initialize_model(self):
+        """Инициализирует новую модель с начальными данными"""
+        # Начальные фиктивные данные для инициализации
+        # В реальности здесь можно добавить базовые паттерны
+        initial_X = np.array([
+            [8, 0], [9, 0], [10, 0],  # Утро, понедельник - не уставший
+            [14, 0], [15, 0], [16, 0],  # День, понедельник
+            [17, 0], [18, 0], [19, 0],  # Вечер, понедельник - уставший
+            [8, 4], [9, 4], [10, 4],    # Утро, пятница
+            [14, 4], [15, 4], [16, 4],  # День, пятница
+        ])
+
+        initial_y = np.array([0, 0, 0, 0, 0, 0, 1, 1, 1, 0, 0, 0, 0, 0, 0])
+
+        self.model = LogisticRegression()
+        X_scaled = self.scaler.fit_transform(initial_X)
+        self.model.fit(X_scaled, initial_y)
+
+        self.save_model()
+
+    def extract_features(self, timestamp: None) -> np.ndarray:
+        #"""Извлекает признаки из времени"""
+        if timestamp is None:
+            timestamp = now()
+
+        #Час дня (преобразуем в циклические признаки
+        hour = timestamp.hour
+        hour_sin = np.sin(2 * np.pi * hour / 24)
+        hour_cos = np.cos(2 * np.pi * hour / 24)
+
+        # День недели
+        day_of_week = timestamp.weekday() # 0=понедельник, 6=воскресенье
+        
+        # Количество часов с начала рабочего дня (предполагаем 9:00 начало)
+        hours_since_start = max(0, hour-9)
+
+        # Послеобеденное время (после 13:00)
+        is_afternoon = 1 if hour >= 14 else 0
+
+        return np.array([hour_sin, hour_cos, day_of_week, hours_since_start, is_afternoon])
+
+    def predict(self, timestamp: None) -> Tuple[bool,float]:
+        """Предсказывает усталость и возвращает уверенность"""
+        if self.model is None:
+            return False, 0.0
+
+        features = self.extract_features(timestamp)
+        features_scaled = self.scaler.transform(features)
+
+        probability = self.model.predict_proba(features_scaled)[0,1]
+        prediction = probability > self.confidence_threshold
+        return prediction, probability
+    
+    def train(self, X: np.ndarray, y: np.ndarray):
+        """Дообучает модель на новых данных"""
+        if self.model is None:
+            self.initialize_model()
+
+        X_scaled = self.scaler.transform(X)
+        self.model.fit(X_scaled, y)
+        self.save_model()
+
+        accuracy = self.model.score(X_scaled, y)
+        logger.info(f"Model accuracy: {accuracy}")
+        return accuracy
+    
+    def save_model(self):
+        """Сохраняет модель и скейлер"""
+        with open(self.model_path, "wb") as f:
+            pickle.dump({
+                "model": self.model,
+                "scaler": self.scaler,
+                "threshold": self.confidence_threshold
+            }, f)
+    
+
+    def load_model(self):
+        """Загружает модель и скейлер"""
+        try:
+            with open(self.model_path, "rb") as f:
+                data = pickle.load(f)
+                self.model = data["model"]
+                self.scaler = data["scaler"]
+                self.confidence_threshold = data.get('threshold', 0.8)
+            logger.info(f"Model loaded from {self.model_path}")
+        except Exception as e:
+            logger.error(f"Failed to load model: {e}")
+            self.initialize_model()
+
+server_ML:
+import asyncio
+import websockets
+from websockets.asyncio.server import serve
+import json
+import signal
+from ml_model import FatiguePredictor
+from database import Database
+import logging
+import numpy as np
+
+from time_controller import now
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+
+class MLServer:
+    def __init__(self, host: str="localhost", port:int = 8766):
+        self.host = host
+        self.port = port  
+        self.server = None
+        self.running = False
+        self.db = Database()
+        self.model = FatiguePredictor()
+
+    async def handle_client(self, websocket, path=None):
+        """Обрабатывает соединение с клиентом"""
+        client_address = websocket.remote_address
+        logger.info(f"New ML client connected: {client_address}")
+
+        try:
+            async for message in websocket:
+                try:
+                    data = json.loads(message)
+                    command = data.get('command')
+                    logger.info(f"ML resived: {data}")
+
+                    if command == 'predict':
+                        timestamp_str = data.get('timestamp')
+                        if timestamp_str:
+                            try:
+                                from datetime import datetime
+                                timestamp = datetime.fromtimestamp(timestamp)
+                            except:
+                                timestamp = now()
+                        else:
+                            timestamp = now()
+                         
+
+                        hour = timestamp.hour
+                        day_of_week = timestamp.weekday
+
+                        prediction, confidence  = self.model.predict([[hour, day_of_week]])
+                        
+                        response = {
+                            'type': 'prediction',
+                            'prediction': bool(prediction),
+                            'confidence': float(confidence),
+                            'threshold_used': float(self.model.confidence_threshold),
+                            'requires_adaptation': confidence > self.model.confidence_threshold,
+                            'timestamp': timestamp.isoformat()
+                        }
+
+                        #Логируем предсказание
+                        self.db.log_command(
+                            source="ml_client",
+                            command="predict",
+                            parameters= f"timestamp: {timestamp}, prediction: {prediction}, confidence: {confidence:.2f}",
+                            success=True
+                        )
+
+                        await websocket.send(json.dumps(response))
+                        logger.info(f"ML send: {response}")
+                    
+                    elif command == 'retrain':
+                        # Запрос на дообучение модели
+
+                        X_data = data.get('X', [])
+                        y_data = data.get('y', [])
+
+                        if X_data and y_data:
+                            X = np.array(X_data)
+                            y = np.array(y_data)
+                            accuracy = self.model.train(X, y)
+
+                            response = {
+                                'type': 'retrain_result',
+                                'accuracy': float(accuracy),
+                                'message': 'Model retrained successfully.'
+                            }
+
+                        else:
+                            response = {
+                                'type': 'error',
+                                'message': 'Invalid training data format.'
+                            }
+
+                        await websocket.send(json.dumps(response))
+
+                    else:
+                        response = {
+                            'type': 'error',
+                            'message': 'Invalid command.'
+                        }
+                        await websocket.send(json.dumps(response))
+
+                except json.JSONDecodeError:
+                    await websocket.send(json.dumps({
+                        'type': 'error',
+                        'message': 'Invalid JSON format'
+                    }))
+                except Exception as e:
+                    await websocket.send(json.dumps({
+                        'type': 'error',
+                        'message': str(e)
+                            }))
+        except websockets.exceptions.ConnectionClosed:
+            logger.info(f"ML client disconnected: {client_address}")
+    
+    async def start(self):
+        # Запускаем сервер
+        self.running = True
+
+        async with serve(self.handle_client, self.host, self.port) as server:
+
+        # Запускаем периодическую задачу обновления модели
+            asyncio.create_task(self.periodic_model_update())
+            self.server = server
+        # Ждем завершения
+            await server.serve_forever()
+
+    async def periodic_model_update(self):
+        while self.running:
+            try: 
+                # Каждые 5 минут пытаемся дообучить модель
+                await asyncio.sleep(300)
+                
+                training_data = self.db.get_training_data()
+                if len(training_data)> 20:  # Минимум 10 записей
+                    X=[]
+                    y=[]
+
+                    for row in training_data:
+                        X.append([row['hour_of_day'], row['day_of_week']])
+                        y.append(1 if row['fatigue_level']>=7 else 0) # Уставший если оценка >= 7
+
+                    if len(y)>0:
+                        self.model.train(np.array(X), np.array(y))
+                        logger.info('Predictor model updated complete')
+            except Exception as e:
+                logger.error(f"Failed to update model: {e}")
+    
+    def stop(self):
+        # Останавливаем сервер
+        self.running = False
+        if self.server:
+            self.server.close()
+        self.db.close()
+        logger.info("ML Server stopped")
+    
+async def main():
+    server = MLServer()
+
+    # Обработка Ctrl+C
+    try:
+        await server.start()
+    except asyncio.CancelledError:
+        pass
+    except Exception as e:
+        logger.error(f"Server error: {e}")
+    finally:
+        server.stop()
+
+if __name__ == "__main__":
+    asyncio.run(main())
+
+server_pybullet:
+import asyncio
+import websockets
+import json
+import time
+from threading import Thread
+import logging
+from main_simulation import KukaRobot
+from database import Database
+
+from time_controller import now
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+class PybulletServer:
+    def __init__(self, host="localhost", port=8765):
+        self.host = host
+        self.port = port
+        self.robot = KukaRobot(gui=True)
+        self.robot.connect()
+        self.db = Database()
+        self.adaptive_mode = False
+        self.clients = set()
+
+    async def register(self,websocket):
+        self.clients.add(websocket)
+        print(f"New client: {websocket.remote_address}")
+    
+    async def unregister(self,websocket):
+        self.clients.remove(websocket)
+        print(f"Client disconnected: {websocket.remote_address}")
+
+    
+    async def broadcast_positions(self):
+        """Передает текущие позиции суставов"""
+        while True:
+            try:
+                positions = self.robot.get_joint_positions()
+                message = {
+                    'type': 'positions',
+                    'JointPositions': positions.get('JointPositions'),
+                    'FramePositions': positions.get('FramePositions'),
+                    'End_effector_Orientation': positions.get('End_effector_Orientation'),
+                    'timestamp': time.time(),
+                    'virtual_time': now().isoformat(),
+                    'adaptive_mode': self.adaptive_mode,
+                    'speed_factor': positions.get('velosity')
+                }
+                
+
+                self.db.save_telemetry(
+                    positions=f'joint_positions:{positions.get('JointPositions')}, frame_positions:{positions.get("FramePositions")}, end_effector_orientation:{positions.get("End_effector_Orientation")}',
+                    velocity=positions.get('velosity'),
+                    adaptive_mode=self.adaptive_mode
+                )
+                try:
+                    await asyncio.gather(
+                        *[asyncio.create_task(client.send(json.dumps(message))) for client in self.clients]
+                    )
+                    
+                except Exception as e:
+                    logger.error(f"Error while broadcasting positions: {e}")
+                    
+                await asyncio.sleep(0.1)
+            except Exception as e:
+                logger.error(f"Error while broadcasting positions: {e}")
+                break
+
+    async def handle_client(self,websocket):
+        await self.register(websocket)
+        client_address = websocket.remote_address
+        logger.info(f"Client connected: {client_address}")
+        try:
+            async for message in websocket:
+                await self.process_message(websocket,message)
+        except Exception as e:
+            logger.error(f"Error while handling client: {e}")
+        except websockets.exceptions.ConnectionClosed:
+            logger.info(f"Client disconnected: {client_address}")
+
+    async def process_message(self,websocket,message):
+        try:
+            data = json.loads(message)
+            command = data.get('command')
+            
+            self.db.log_command(
+                "response_pybullet_server", 
+                command, 
+                json.dumps(data), 
+                True
+            )
+            response=None
+            
+            if command == 'move_joint':
+                joint = data.get('joint')
+                direction = data.get('direction')
+                step = data.get('step', 0.1)
+                success,log_msg = self.robot.move_joint(joint,direction,step)
+
+                response={
+                    'type': 'command_response',
+                    'command':'move_joint',
+                    'success': success,
+                    'message': log_msg,
+                    'timestamp': time.time()
+                }
+
+            elif command == 'reset_positions':
+                self.robot.reset_positions()
+                response={
+                    'type': 'command_response',
+                    'command':'reset_positions',
+                    'success': True,
+                    'message': 'Positions have been reset',
+                    'timestamp': time.time()
+                }
+            
+            elif command == 'start_automatic_mode':
+                points = data.get('points')
+                orientations = data.get('orientations', None)
+                loop = data.get('loop_programming', False)
+                success,log_msg = self.robot.start_automatic_mode(points, orientations, loop)
+                response={
+                    'type': 'command_response',
+                    'command':'start_automatic',
+                    'success': success,
+                    'message': log_msg,
+                    'point_count': len(points),
+                    'timestamp': time.time()
+                }
+            
+            elif command == 'stop_automatic_mode':
+                self.robot.automatic_mode = False
+                success,log_msg = self.robot.stop_automatic_mode()
+                response={
+                    'type': 'command_response',
+                    'command':'stop_automatic',
+                    'success': success,
+                    'message': log_msg,
+                    'timestamp': time.time()
+                }
+                
+            elif command == 'set_adaptive_mode':
+                self.adaptive_mode = data.get('enabled', False)
+                self.robot.set_adaptive_mode(self.adaptive_mode, 'reduced' if self.adaptive_mode else 'full')
+                response={
+                    'type': 'command_response',
+                    'command':'set_adaptive_mode',
+                    'success': True,
+                    'message': 'Adaptive mode has been set',
+                    'adaptive_mode': self.adaptive_mode,
+                    'timestamp': time.time()
+                }
+                
+                logger.info(f"Adaptive mode: {self.adaptive_mode}, Speed mode: {self.speed_mode}")
+                
+                
+            else:
+                response={
+                    'type': 'error',
+                    'message': 'Unknown command',
+                    'timestamp': time.time()
+                }
+            
+            await websocket.send(json.dumps(response))
+                
+            
+            logger.info(f"Sedding response: {response}")
+            self.db.log_command(
+                "send_pybullet_server",
+                response.get('command'), 
+                json.dumps(response), 
+                True
+            )
+            
+        except json.JSONDecodeError:
+            await websocket.send(json.dumps({
+                'type': 'error',
+                'message': 'Invalid JSON format'
+            }))
+        except Exception as e:
+            await websocket.send(json.dumps({
+                'type': 'error',
+                'message': str(e)
+            }))
+
+    
+    async def start_server(self):
+        async with websockets.serve(self.handle_client, self.host, self.port):
+            logger.info(f"Server started on {self.host}:{self.port}")
+            
+            self.broadcast_task = asyncio.create_task(self.broadcast_positions())
+            await asyncio.Future()
+
+    def run(self):
+        asyncio.run(self.start_server())
+
+    def run_in_thread(self):
+        thread = Thread(target=self.run , daemon=True)
+        thread.start()
+        return thread
+
+    def stop(self):
+        """Остановка сервера"""
+        logger.info("Остановка сервера PyBullet...")
+        self.running = False
+        self.db.close()
+        if self.broadcast_task and not self.broadcast_task.done():
+            self.broadcast_task.cancel()
+        
+        if hasattr(self, 'robot') and self.robot:
+            self.robot.disconnect()
+    
+if __name__ == "__main__":
+    server = PybulletServer()
+    
+    try:
+    # Запускаем сервер в отдельном потоке
+        server_thread = server.run_in_thread()
+    
+        # Основной поток ждет завершения
+        while True:
+            time.sleep(1)
+        
+    except KeyboardInterrupt:
+        logger.info("Получен сигнал KeyboardInterrupt")
+        server.stop()
+
 time_controller:
 # time_controller.py
 """
@@ -487,95 +2211,218 @@ time_controller:
 import threading
 import datetime as dt
 import time
+import mmap
+import ctypes
+import tempfile
+import atexit
+import signal
+import os
+import gc
 from typing import Optional
+
+class SharedTime(ctypes.Structure):
+    _fields_ = [
+        ('timestamp', ctypes.c_double), # Unix timestamp
+        ('acceleration', ctypes.c_double),
+        ('last_real_time', ctypes.c_double),
+        ('running', ctypes.c_bool),
+        ('lock', ctypes.c_byte*64)  # Простая блокировка
+    ]
 
 
 class GlobalTimeController:
     """Глобальный менеджер времени с ускорением"""
 
     _instance: Optional['GlobalTimeController'] = None
-    _current_time: dt.datetime
-    _acceleration: float = 1.0  # 1x = реальное время
-    _running: bool = False
-    _thread: Optional[threading.Thread] = None
-    _lock: threading.Lock
-    _update_event: threading.Event
+    _shared_memory: Optional[mmap.mmap] = None
+    _mmap_file: Optional[tempfile.NamedTemporaryFile] = None
 
     def __new__(cls):
         if cls._instance is None:
             cls._instance = super().__new__(cls)
-            cls._instance._current_time = dt.datetime.now()
-            cls._instance._lock = threading.Lock()
-            cls._instance._update_event = threading.Event()
+            cls._instance._init_shared_memory()
+            cls._instance._start_time_thread()
+            atexit.register(cls._instance.cleanup)
+            # Перехватываем сигнал SIGINT (Ctrl+C)
+            signal.signal(signal.SIGINT, cls._instance.signal_handler)
         return cls._instance
+    
+    def signal_handler(self, signum, frame):
+        """Обработчик Ctrl+C"""
+        print("\n Получен сигнал Ctrl+C, останавливаем время...")
+        self.stop()
+        # Выходим с правильным кодом
+        import sys
+        sys.exit(0)
 
-    def start(self):
+    def _init_shared_memory(self):
+        """Инициализация разделяемой памяти"""
+        # Создаем временный файл для mmap
+        self.temp_dir = tempfile.gettempdir()
+        self.mmap_path = os.path.join(self.temp_dir, 'shared_time.mmap')
+
+         # Размер структуры SharedTime
+        self.struct_size = ctypes.sizeof(SharedTime)
+
+        # Создаем или открываем файл
+        if not os.path.exists(self.mmap_path):
+            with open(self.mmap_path, 'wb') as f:
+                f.write(b'\x00' * self.struct_size)
+        
+        # Открываем файл и создаем mmap
+        self.file = open(self.mmap_path, "r+b")
+        self.mmap = mmap.mmap(
+            self.file.fileno(), 
+            self.struct_size, 
+            access=mmap.ACCESS_WRITE
+        )
+
+        # Создаем ctypes объект из памяти
+        self.shared = SharedTime.from_buffer(self.mmap)
+
+        # Если это первый запуск, инициализируем значения
+        if self.shared.timestamp == 0:
+            now = time.time()
+            self.shared.timestamp = now
+            self.shared.acceleration = 1.0
+            self.shared.last_real_time = now
+            self.shared.running = True
+        
+        self._lock = threading.Lock()
+        self._thread = None
+        self._stop_event = threading.Event()  # Добавляем событие для остановки
+        self._cleaned_up = False # Флаг для предотвращения двойной очистки
+
+    def _start_time_thread(self):
         """Запустить поток с временем (вызывается автоматически)"""
-        if not self._running:
-            self._running = True
-            self._thread = threading.Thread(target=self._time_loop, daemon=False)
-            self._thread.start()
-            print("GlobalTimeController started")
+        self._stop_event.clear()
+        self._thread = threading.Thread(target=self._time_loop, daemon=True)
+        self._thread.start()
+        print("GlobalTimeController started")
 
     def _time_loop(self):
         """Основной цикл времени (выполняется в отдельном потоке)"""
-        last_real=time.time()
-        update_counter = 0
-        while self._running:
-            # Спим недолго, чтобы время обновлялось плавно
-            time.sleep(0.1)
+        try:
+            while not self._stop_event.is_set():
+                # Спим недолго, чтобы время обновлялось плавно
+                time.sleep(0.1)
+                if not self.shared.running:
+                    continue
+                # Получаем текущее время ДО блокировки
+                current_real = time.time()
 
-            # Получаем текущее время ДО блокировки
-            current_real = time.time()
-            real_delta = current_real - last_real
-            
-            # Обновляем last_real ДО блокировки (важно!)
-            last_real = current_real
-            
-            # Теперь захватываем блокировку только для обновления _current_time
-            with self._lock:
-                virtual_delta = real_delta * self._acceleration
-                self._current_time += dt.timedelta(seconds=virtual_delta)
-                update_counter += 1
-                
-                # Каждую секунду устанавливаем событие
-                if update_counter % 10 == 0:
-                    self._update_event.set()
+                with self._lock:
+                    real_delta = current_real - self.shared.last_real_time
+                    # Обновляем last_real ДО блокировки (важно!)
+                    self.shared.last_real_time = current_real
+
+                    virtual_delta = real_delta * self.shared.acceleration
+                    self.shared.timestamp += virtual_delta
+        except Exception as e:
+            print(f"GlobalTimeController error: {e}")
+        finally:
+            print("Cleaning up thread resources...")
 
     def now(self) -> dt.datetime:
         """Текущее виртуальное время (замена datetime.now)"""
-        return self._current_time
+        return dt.datetime.fromtimestamp(self.shared.timestamp)
 
     def configure(self, start_time: dt.datetime, acceleration: float = 1.0):
         """Настроить виртуальное время"""
         with self._lock:
-            self._current_time = start_time
-            self._acceleration = acceleration
+            self.shared.timestamp = start_time.timestamp()
+            self.shared.acceleration = acceleration
+            self.shared.last_real_time = time.time()
 
 
     def jump_to(self, new_time: dt.datetime):
         """Скачкообразно перейти к указанному времени"""
         with self._lock:
-            self._current_time = new_time
+            self.shared.timestamp = new_time.timestamp()
+            self.shared.last_real_time = time.time()
         
 
     def fast_forward(self, hours: float = 0, minutes: float = 0):
         """Быстрая перемотка вперёд"""
-        delta = dt.timedelta(hours=hours, minutes=minutes)
+        seconds = hours * 3600 + minutes * 60
         with self._lock:
-            self._current_time += delta
-       
+            self.shared.timestamp += seconds
+            self.shared.last_real_time = time.time()
+    
+    def pause(self):
+        with self._lock:
+            self.shared.acceleration = 0
+            self.shared.last_real_time = time.time()
+
+    def resume(self):
+        with self._lock:
+            self.shared.acceleration = 1.0
+            self.shared.last_real_time = time.time()
 
     def stop(self):
         """Остановить течение времени"""
-        self._running = False
-        if self._thread:
-            self._thread.join(timeout=1.0)
-        print("GlobalTimeController stopped")
+        self.shared.running = False
+        self._stop_event.set()
+        if self._thread and self._thread.is_alive():
+            self._thread.join(timeout=2.0)
+            if self._thread.is_alive():
+                print("GlobalTimeController failed to stop")
+            else:
+                print("GlobalTimeController stopped")
+            
     
+    def cleanup(self):
+        """Очистить ресурсы после завершения программы"""
+        if hasattr(self, '_cleaned_up') and self._cleaned_up:
+            return
+        print(f" Cleaning up resources (PID: {os.getpid()})")
+        # 1. Сначала останавливаем поток
+        self.stop()
+        # 2. Удаляем ссылку на shared (ВАЖНО!)
+        if hasattr(self, 'shared'):
+            del self.shared
+
+        # 3. Принудительный сбор мусора
+        gc.collect()
+
+        # 4. Закрываем mmap
+        if hasattr(self, 'mmap'):
+            try:
+                self.mmap.close()
+                print("mmap closed")
+            except Exception as e:
+                print(f"Failed to close mmap: {e}")
+        
+        # 5. Закрываем файл
+        if hasattr(self, 'file') and self.file:
+           try:
+                self.file.close()
+                print("file closed")
+           except Exception as e:
+                print(f"Failed to close file: {e}")
+
+        # 6. Удаляем временный файл        
+        if hasattr(self, 'mmap_path') and os.path.exists(self.mmap_path):
+            try:
+                os.remove(self.mmap_path)
+                print("mmap file removed")
+            except Exception as e:
+                print(f"Failed to remove mmap file: {e}")
+                
+        self._cleaned_up = True
+        print("cleanup done")
+
     @property
     def acceleration(self):
-        return self._acceleration
+        return self.shared.acceleration
+    
+    @property
+    def is_running(self):
+        return self.shared.running
+
+    @property
+    def  thread_alive(self):
+        return self._thread is not None and self._thread.is_alive()
 
 
 # Глобальный экземпляр для импорта
@@ -591,3 +2438,152 @@ def now() -> dt.datetime:
 def today() -> dt.date:
     """Использовать вместо datetime.today()"""
     return time_controller.now().date()
+
+time_master:
+# time_master.py
+"""
+Отдельный скрипт для управления временем во всём проекте.
+Запускается параллельно с основным приложением.
+"""
+import datetime as dt
+import signal
+from time_controller import time_controller
+
+
+class TimeMaster:
+    """Мастер-контроллер времени с Web UI или консольным интерфейсом"""
+
+    def __init__(self):
+        self.running = True
+        self._setup_signal_handlers()
+
+    def _setup_signal_handlers(self):
+        """Обработка Ctrl+C"""
+        signal.signal(signal.SIGINT, self._shutdown)
+        signal.signal(signal.SIGTERM, self._shutdown)
+
+    def _shutdown(self, signum, frame):
+        print("\nЗавершение Time Master...")
+        self.running = False
+
+    def _print_status(self):
+        print(f"Текущее время: {time_controller.now():%Y-%m-%d %H:%M:%S}")
+        print(f"Ускорение: {time_controller.acceleration}x")
+        print(f"Состояние {'запущено' if time_controller.is_running else 'приостановлено'}")
+
+    def _reset_to_real_time(self):
+        """Сброс к реальному времени"""
+        real_now = dt.datetime.now()
+        time_controller.configure(
+            start_time=real_now,
+            acceleration=1.0
+        )
+
+    def run(self):
+        """Консольный интерфейс управления временем"""
+        print("=" * 60)
+        print("TIME MASTER - Глобальный контроллер времени")
+        print("=" * 60)
+        print(f"Текущее время: {time_controller.now():%Y-%m-%d %H:%M:%S}")
+        print(f"Ускорение: {time_controller.acceleration}x")
+        print("Команды:")
+        print("status  - текущее состояние")
+        print("  now     - текущее виртуальное время")
+        print("  jump HH:MM - перейти к указанному времени")
+        print("  ff N    - перемотать N часов вперёд")
+        print("  speed X - установить ускорение X")
+        print("  pause   - приостановить время")
+        print("  resume  - возобновить время")
+        print("  exit    - выход")
+        print("=" * 60)
+
+        self._print_status()
+
+        while self.running:
+            try:
+                command = input("\nВведите команду: ").strip().lower()
+
+                if not command:
+                    continue
+
+                if command == 'now':
+                    print(f"Виртуальное время: {time_controller.now():%Y-%m-%d %H:%M:%S}")
+                    print(f"Ускорение: {time_controller.acceleration}x")
+
+                elif command == 'status':
+                    self._print_status()
+
+                elif command.startswith('jump '):
+                    try:
+                        time_str = command.split(' ', 1)[1]
+                        hour, minute = map(int, time_str.split(':'))
+                        current = time_controller.now()
+                        new_time = current.replace(hour=hour, minute=minute, second=0, microsecond=0)
+                        time_controller.jump_to(new_time)
+                        print(f"Переход к {new_time:%H:%M}")
+                        self._print_status()
+                    except (ValueError, IndexError):
+                        print("Ошибка формата. Используйте: jump HH:MM")
+
+                elif command.startswith('ff '):
+                    try:
+                        hours = float(command.split(' ', 1)[1])
+                        time_controller.fast_forward(hours=hours)
+                        print(f"Перемотка на {hours} часов")
+                        self._print_status()
+                    except (ValueError, IndexError):
+                        print("Ошибка формата. Используйте: ff 1.5")
+
+                elif command.startswith('speed '):
+                    try:
+                        speed = float(command.split(' ', 1)[1])
+                        time_controller.configure(
+                            time_controller.now(),
+                            acceleration=speed
+                        )
+                        print(f"Ускорение установлено: {speed}x")
+                        self._print_status()
+                    except (ValueError, IndexError):
+                        print("Ошибка формата. Используйте: speed 60")
+                        
+                elif command == 'reset':
+                    self._reset_to_real_time()
+                    self._print_status()
+
+
+                elif command == 'pause':
+                    time_controller.pause()
+                    print("Время приостановлено")
+                    self._print_status()
+
+                elif command == 'resume':
+                    time_controller.resume()
+                    print("Время возобновлено")
+                    self._print_status()
+                
+                elif command == 'exit':
+                    self.running = False
+
+                else:
+                    print("Неизвестная команда")
+
+            except (EOFError, KeyboardInterrupt):
+                self.running = False
+            except Exception as e:
+                print(f"Ошибка: {e}")
+        time_controller.stop()
+        print("Завершение Time Master...")
+
+    
+
+
+def main():
+    master = TimeMaster()
+    try:
+        master.run()
+    except KeyboardInterrupt:
+        print("\n Пока!")
+
+if __name__ == '__main__':
+    main()
+

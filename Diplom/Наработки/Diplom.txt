@@ -1,10 +1,13 @@
 adaptive_robot_control/
 ├── main.py                    # Точка входа
 ├── gui.ui                     # Главный интерфейс Qt
+├── adaptation.py              # Параметры изменения интерфейса
 ├── database.py               # Работа с SQLite
 ├── ml_model.py              # ML модель
 ├── server_pybullet.py       # Сервер для симуляции
 ├── server_ml.py             # Сервер для ML
 ├── client_pybullet.py       # Клиент для симуляции
 ├── client_ml.py             # Клиент для ML
+├── time_controller.py       # Скрипт для управления временем
+├── time_master              # Интерфейс для управления временем
 └── main_simulation.py       # Симуляция PyBullet
