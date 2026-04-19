@@ -53,7 +53,7 @@ class MainWindow(QMainWindow):
         self.ml_client.predictions_received.connect(self.on_ml_prediction)
         self.ml_client.error_occurred.connect(self.on_ml_error)
 
-        self.adaptation.apply_normal_style(self.ui) #Стиль по умолчанию
+        self.adaptation.apply_normal_style(self.ui, instant=True) #Стиль по умолчанию
         # Состояния
         self.adaptive_mode = False
         self.survey_answered = False
@@ -365,6 +365,7 @@ class MainWindow(QMainWindow):
 
     @Slot()
     def show_survey_notification(self):
+        """
         time_controller.pause()
         time_controller.configure(
                             time_controller.now(),
@@ -374,6 +375,7 @@ class MainWindow(QMainWindow):
         #Показать уведомление об опросе
         QMessageBox().information(self, "Опрос", "Пожалуйста, ответьте на опрос!")
         self.ui.SurveyPageButton.click()
+        """
         
         self.log_message("Show survey notification")
 
@@ -520,6 +522,7 @@ class MainWindow(QMainWindow):
     def update_time_and_check_events(self):
         current_time = now().strftime( "%H:%M:%S")
         self.ui.TimeLabel.setText(f"{current_time}")
+        self.ui.DateLabel.setText(f"{now().strftime('%d.%m.%Y')}")
         self.ui.last_survey.setText(f"До следующего опроса: {self.next_survey_time - now()}")
 
         if now() >= self.next_survey_time:
