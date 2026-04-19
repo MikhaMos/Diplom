@@ -24,7 +24,7 @@ class Ui_MainWindow(object):
     def setupUi(self, MainWindow):
         if not MainWindow.objectName():
             MainWindow.setObjectName(u"MainWindow")
-        MainWindow.resize(875, 671)
+        MainWindow.resize(880, 670)
         self.centralwidget = QWidget(MainWindow)
         self.centralwidget.setObjectName(u"centralwidget")
         self.stackedWidget = QStackedWidget(self.centralwidget)
@@ -242,17 +242,17 @@ class Ui_MainWindow(object):
         self.SurvayPage.setObjectName(u"SurvayPage")
         self.StatusSurvey = QGroupBox(self.SurvayPage)
         self.StatusSurvey.setObjectName(u"StatusSurvey")
-        self.StatusSurvey.setGeometry(QRect(10, 10, 171, 81))
+        self.StatusSurvey.setGeometry(QRect(10, 10, 181, 81))
         self.verticalLayoutWidget_3 = QWidget(self.StatusSurvey)
         self.verticalLayoutWidget_3.setObjectName(u"verticalLayoutWidget_3")
-        self.verticalLayoutWidget_3.setGeometry(QRect(0, 0, 171, 80))
+        self.verticalLayoutWidget_3.setGeometry(QRect(0, 0, 181, 80))
         self.verticalLayout_7 = QVBoxLayout(self.verticalLayoutWidget_3)
         self.verticalLayout_7.setObjectName(u"verticalLayout_7")
         self.verticalLayout_7.setContentsMargins(0, 0, 0, 0)
-        self.label_8 = QLabel(self.verticalLayoutWidget_3)
-        self.label_8.setObjectName(u"label_8")
+        self.DateLabel = QLabel(self.verticalLayoutWidget_3)
+        self.DateLabel.setObjectName(u"DateLabel")
 
-        self.verticalLayout_7.addWidget(self.label_8)
+        self.verticalLayout_7.addWidget(self.DateLabel)
 
         self.last_survey = QLabel(self.verticalLayoutWidget_3)
         self.last_survey.setObjectName(u"last_survey")
@@ -498,7 +498,7 @@ class Ui_MainWindow(object):
         self.horizontalLayoutWidget_2.setObjectName(u"horizontalLayoutWidget_2")
         self.horizontalLayoutWidget_2.setGeometry(QRect(0, 0, 861, 51))
         self.horizontalLayout_2 = QHBoxLayout(self.horizontalLayoutWidget_2)
-        self.horizontalLayout_2.setSpacing(10)
+        self.horizontalLayout_2.setSpacing(8)
         self.horizontalLayout_2.setObjectName(u"horizontalLayout_2")
         self.horizontalLayout_2.setContentsMargins(2, 2, 2, 0)
         self.ControlPageButton = QPushButton(self.horizontalLayoutWidget_2)
@@ -581,7 +581,7 @@ class Ui_MainWindow(object):
         MainWindow.setCentralWidget(self.centralwidget)
         self.menubar = QMenuBar(MainWindow)
         self.menubar.setObjectName(u"menubar")
-        self.menubar.setGeometry(QRect(0, 0, 875, 21))
+        self.menubar.setGeometry(QRect(0, 0, 880, 21))
         MainWindow.setMenuBar(self.menubar)
         self.statusbar = QStatusBar(MainWindow)
         self.statusbar.setObjectName(u"statusbar")
@@ -589,7 +589,7 @@ class Ui_MainWindow(object):
 
         self.retranslateUi(MainWindow)
 
-        self.stackedWidget.setCurrentIndex(0)
+        self.stackedWidget.setCurrentIndex(1)
 
 
         QMetaObject.connectSlotsByName(MainWindow)
@@ -622,7 +622,7 @@ class Ui_MainWindow(object):
         self.pushButton_23.setText("")
         self.ClearProgramButtons.setText(QCoreApplication.translate("MainWindow", u"ClearProgram", None))
         self.StatusSurvey.setTitle("")
-        self.label_8.setText(QCoreApplication.translate("MainWindow", u"TextLabel", None))
+        self.DateLabel.setText(QCoreApplication.translate("MainWindow", u"TextLabel", None))
         self.last_survey.setText(QCoreApplication.translate("MainWindow", u"TextLabel", None))
         self.interval_survey.setText(QCoreApplication.translate("MainWindow", u"TextLabel", None))
         self.Question_1.setTitle("")

@@ -68,6 +68,20 @@ def main():
     y_pred = model.predict(X_scaled)
     y_prob = model.predict_proba(X_scaled)[:, 1]
 
+    # 3. График 1: динамика вероятности по времени
+    sorted_idx = np.argsort(timestamps)
+    timestamps_sorted = [timestamps[i] for i in sorted_idx]
+    prob_sorted = y_prob[sorted_idx]
+    plt.figure(1)
+    plt.plot(timestamps_sorted, prob_sorted, label='Вероятность усталости')
+    plt.axhline(y=0.7, color='r', linestyle='--', label='Порог адаптации (0.7)')
+    plt.xlabel('Время опроса')
+    plt.ylabel('Вероятность')
+    plt.title('Динамика предсказаний модели')
+    plt.legend()
+    plt.xticks(rotation=45)
+    plt.tight_layout()
+    
     # 3. Группировка данных по часам и расчёт средней вероятности
     df = pd.DataFrame({
         'timestamp': timestamps,
@@ -82,10 +96,10 @@ def main():
 
     # Оставляем только рабочие часы (с 9 до 18)
     hourly_avg = hourly_avg[(hourly_avg['hour'] >= 9) & (hourly_avg['hour'] <= 18)]
-
+    
     
     # 4. Построение графика средней вероятности по часам
-    plt.figure(1, figsize=(10, 6))
+    plt.figure(2, figsize=(10, 6))
     plt.plot(hourly_avg['hour'], hourly_avg['probability'], 
             marker='o', linestyle='-', linewidth=2, markersize=6, 
             label='Средняя вероятность усталости')
@@ -103,7 +117,7 @@ def main():
     # 4. График 2: матрица ошибок
     cm = confusion_matrix(y, y_pred)
     disp = ConfusionMatrixDisplay(confusion_matrix=cm, display_labels=['Не устал', 'Устал'])
-    plt.figure(2)
+    plt.figure(3)
     disp.plot(ax=plt.gca())
     plt.title('Матрица ошибок')
 
@@ -117,7 +131,7 @@ def main():
     model_two = LogisticRegression()
     model_two.fit(X_two_scaled, y)
 
-    plt.figure(3)
+    plt.figure(4)
     plot_decision_regions(X_two_scaled, y, model_two)
     plt.xlabel('hour_sin (масштабированный)')
     plt.ylabel('hours_since_start (масштабированный)')

@@ -24,7 +24,7 @@
      </rect>
     </property>
     <property name="currentIndex">
-     <number>0</number>
+     <number>1</number>
     </property>
     <widget class="QWidget" name="ControlPage">
      <widget class="QGroupBox" name="MoveBox">
@@ -486,7 +486,7 @@ p, li { white-space: pre-wrap; }
        <rect>
         <x>10</x>
         <y>10</y>
-        <width>171</width>
+        <width>181</width>
         <height>81</height>
        </rect>
       </property>
@@ -498,13 +498,13 @@ p, li { white-space: pre-wrap; }
         <rect>
          <x>0</x>
          <y>0</y>
-         <width>171</width>
+         <width>181</width>
          <height>80</height>
         </rect>
        </property>
        <layout class="QVBoxLayout" name="verticalLayout_7">
         <item>
-         <widget class="QLabel" name="label_8">
+         <widget class="QLabel" name="DateLabel">
           <property name="text">
            <string>TextLabel</string>
           </property>
