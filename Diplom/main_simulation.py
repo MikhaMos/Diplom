@@ -235,7 +235,7 @@ class KukaRobot:
         logger.info(f"SSM zones visualized: mode={self.current_ssm_mode}, inner={inner_radius}, outer={outer_radius}")
         
         
-    async def set_adaptive_mode(self, adaptive_mode, speed_mode_type):
+    def set_adaptive_mode(self, adaptive_mode, speed_mode_type):
         if adaptive_mode:
             ssm_zone_type = 'restricted'
         else:

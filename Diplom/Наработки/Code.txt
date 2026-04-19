@@ -1,5 +1,4 @@
-Main.app:
-
+Main_app.py:
 import sys
 import os
 from PySide6 import QtUiTools
@@ -11,6 +10,11 @@ from PySide6.QtCore import Qt, QTimer, Signal, QObject, Slot, QThread
 import json
 import asyncio
 import threading
+from datetime import timedelta
+import logging
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 from time_controller import now, time_controller
 
@@ -23,7 +27,7 @@ class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("Control panel")
-        self.resize(874,667)
+        self.resize(880,670)
         
         current_dir = os.path.dirname(os.path.abspath(__file__))
         ui_file=os.path.join(current_dir,'Gui.ui')
@@ -35,7 +39,8 @@ class MainWindow(QMainWindow):
         # инициализация компонентов
         self.robot_client = PyBulletClient()
         self.adaptation = adaptation.AdaptationManager()
-        self.ml_client = MLClient()
+        self.ml_check_interval = 5 # 5 минут
+        self.ml_client = MLClient(prediction_interval=self.ml_check_interval*60)
         self.db = Database()
 
         self.robot_client.connected.connect(self.on_robot_connect)
@@ -49,11 +54,12 @@ class MainWindow(QMainWindow):
         self.ml_client.predictions_received.connect(self.on_ml_prediction)
         self.ml_client.error_occurred.connect(self.on_ml_error)
 
-        #self.adaptation.apply_simple_style(self.ui) #Стиль по умолчанию
+        self.adaptation.apply_normal_style(self.ui) #Стиль по умолчанию
         # Состояния
         self.adaptive_mode = False
         self.survey_answered = False
         self.current_fatigue_level = 0
+        self.current_confidence_level = 0
         self.current_frame_pos_robot = []
         self.current_orientation_robot = []
         self.current_joint_positions = []
@@ -93,9 +99,9 @@ class MainWindow(QMainWindow):
 
         #Текста
         self.ui.StatusPanel.setText(f"Status: Инициализациия...")
-        self.ui.Label_ML_status.setText(f"ML: не подключена")
-        self.ui.Label_robot_status.setText(f"Robot: не подлючен")
-        self.ui.Label_adaptive_mode.setText(f"Упрощенный режим: выкл")
+        self.ui.Label_ML_status.setText(f" ML: не подключена")
+        self.ui.Label_robot_status.setText(f" Robot: не подлючен")
+        self.ui.Label_adaptive_mode.setText(f" Упрощенный режим: выкл")
         self.ui.label_moving.setText(f"❌")
         
         # Подключаем переключение страниц
@@ -120,6 +126,7 @@ class MainWindow(QMainWindow):
         self.ui.SavePointButton.clicked.connect(self.save_positions)
         self.ui.pushButton_23.clicked.connect(lambda: self.log_message("Кнопка 2 нажата"))
         self.ui.ClearProgramButtons.clicked.connect(self.clear_points)
+        
 
         # Настройка вывода
         self.ui.Output.setReadOnly(True)
@@ -129,15 +136,15 @@ class MainWindow(QMainWindow):
         # Настройка управления роботом
         # Маппинг кнопок на суставы (индекс сустава, направление)
         self.joint_buttons = [
-            (self.ui.XForward, 'X', 1), (self.ui.XBackward, 'X', -1),
-            (self.ui.YForward, 'Y', 1), (self.ui.YBackward, 'Y', -1),
-            (self.ui.ZForward, 'Z', 1), (self.ui.ZBackward, 'Z', -1),
-            (self.ui.AForward, 'A', 1), (self.ui.ABackward, 'A', -1),
-            (self.ui.BForward, 'B', 1), (self.ui.BBackward, 'B', -1),
-            (self.ui.CForward, 'C', 1), (self.ui.CBackward, 'C', -1),
+            (self.ui.XForward, '1', 1), (self.ui.XBackward, '1', -1),
+            (self.ui.YForward, '2', 1), (self.ui.YBackward, '2', -1),
+            (self.ui.ZForward, '3', 1), (self.ui.ZBackward, '3', -1),
+            (self.ui.AForward, '4', 1), (self.ui.ABackward, '4', -1),
+            (self.ui.BForward, '5', 1), (self.ui.BBackward, '5', -1),
+            (self.ui.CForward, '6', 1), (self.ui.CBackward, '6', -1),
         ]
 
-        self.joint_map = ['Y', 'X', 'A', 'Z', 'B', 'C']
+        self.joint_map = ['1', '2', '3', '4', '5', '6']
 
         for button, joint_name, direction in self.joint_buttons:
             # Настраиваем автоповтор для непрерывного движения при удержании
@@ -164,10 +171,24 @@ class MainWindow(QMainWindow):
         for i, btn in enumerate(self.radio_button, 1):
             self.survey_group.addButton(btn, i)
 
+        # Второй вопрос (radioButton 11-20)
+        self.radio_button2 = [
+            self.ui.radioButton_11, self.ui.radioButton_12, self.ui.radioButton_13,
+            self.ui.radioButton_14, self.ui.radioButton_15, self.ui.radioButton_16,
+            self.ui.radioButton_17, self.ui.radioButton_18, self.ui.radioButton_19,
+            self.ui.radioButton_20
+        ]
+        self.survey_group2 = QButtonGroup(self)
+        for i, btn in enumerate(self.radio_button2, 1):
+            self.survey_group2.addButton(btn, i)
+
         # Кнопка отправки опроса
         self.ui.SentAnswer.clicked.connect(self.submit_survey)
 
     def setup_timers(self):
+
+        """
+        #Для реального времени
         # Таймеры
         self.timer = QTimer(self)
         self.timer.timeout.connect(self.update_time)
@@ -181,7 +202,16 @@ class MainWindow(QMainWindow):
         # Таймеры для проверки адаптации ML
         self.ml_check_timer = QTimer()
         self.ml_check_timer.timeout.connect(self.check_ml_adaptation)
-        self.ml_check_timer.start(60000)  # Каждую минуту
+        self.ml_check_timer.start(300000)  # Каждые 5 минут
+    """
+
+        #Для виртуального
+        self.timer = QTimer(self)
+        self.timer.timeout.connect(self.update_time_and_check_events)
+        self.timer.start(100)
+
+        self.schedule_next_survey()
+        self.schedule_next_ml_check()
 
     def connect_to_servers(self):
         # Подключаемся к серверам
@@ -260,32 +290,34 @@ class MainWindow(QMainWindow):
 
     @Slot()
     def submit_survey(self):
-        select_id = self.survey_group.checkedId()
+        fatigue_level = self.survey_group.checkedId()
+        concentration_level = self.survey_group2.checkedId()
 
-        if select_id == -1:
+        if fatigue_level == -1 or concentration_level == -1:
             QMessageBox.warning(
                 self,
                 "Error",
                 "Please answer all questions"
             ) 
+            return
         
         # Сохраняем опрос в базу данных
-        fatigue_level = select_id 
-        self.db.save_survey(fatigue_level)
+        self.db.save_survey(fatigue_level, concentration_level)
 
         # Сохраняем опрос в лог
         self.db.log_command(
             source='main_app',
             command='submit_survey',
-            parameters=f"fatigue_level={fatigue_level}",
+            parameters=f"fatigue_level={fatigue_level}, concentration_level={concentration_level}",
             success=True
         )
 
         # Обновляем состояние
         self.current_fatigue_level = fatigue_level
+        self.current_concentration_level = concentration_level
         self.survey_answered = True
 
-        self.log_message(f"Answered survey: {fatigue_level}")
+        self.ui.history_answer.append(f"Ответы опроса в time={now().strftime('%m-%d %H:%M')}: fatigue_level={fatigue_level}, concentration_level={concentration_level}")
 
         # Сбрасываем выбор
         self.survey_group.setExclusive(False)
@@ -294,39 +326,71 @@ class MainWindow(QMainWindow):
             checked_button.setChecked(False)
         self.survey_group.setExclusive(True)
 
-        # Обновляем интервал опроса
-        self.update_survey_interval()
+        self.survey_group2.setExclusive(False)
+        checked_button = self.survey_group2.checkedButton()
+        if checked_button:
+            checked_button.setChecked(False)
+        self.survey_group2.setExclusive(True)
 
+        # Обновляем интервал опроса
+        self.get_current_survey_interval_minutes()
         # переключаемся на страницу управления
         self.ui.ControlPageButton.click()
 
-    def update_survey_interval(self):
-        """Обновление интервала опроса на основе количества данных"""
-        training_data=self.db.get_training_data()
-        count=len(training_data)
-        if count<1440:
-            interval= 30*60*1000 # 30 минут
-        elif count<=2880:
-            interval= 60*60*1000 # 1 час
-        else:
-            interval= 120*60*1000 # 2 часа
 
-        self.survey_timer.setInterval(interval)
-        self.log_message(f"Updated survey interval to {interval}")
+    def schedule_next_survey(self):
+        """Устанавливает следующее время опроса на основе текущего виртуального времени и интервала."""
+        current = now()
+        interval_minutes = self.get_current_survey_interval_minutes()
+        self.next_survey_time = current + timedelta(minutes=interval_minutes)
+
+    def get_current_survey_interval_minutes(self):
+        """Обновление интервала опроса на основе количества данных"""
+        count = self.db.get_survey_count()
+        if count<1440:
+            self.ui.interval_survey.setText(f"Интервал опроса: 30 минут")
+            return 30 # 30 минут
+        elif count<=2880:
+            self.ui.interval_survey.setText(f"Интервал опроса: 60 минут")
+            return 60 # 1 час
+        else:
+            self.ui.interval_survey.setText(f"Интервал опроса: 120 минут")
+            return 120 # 2 часа
+        
+    
+    def schedule_next_ml_check(self):
+        """Следующая проверка адаптации через 5 виртуальных минут."""
+        self.next_ml_check_time = now() + timedelta(minutes=self.ml_check_interval)
+        
     
 
     @Slot()
     def show_survey_notification(self):
+        time_controller.pause()
+        time_controller.configure(
+                            time_controller.now(),
+                            acceleration=1
+                        )
+        time_controller.resume()
         #Показать уведомление об опросе
         QMessageBox().information(self, "Опрос", "Пожалуйста, ответьте на опрос!")
         self.ui.SurveyPageButton.click()
+        
         self.log_message("Show survey notification")
+
 
     @Slot()
     def check_ml_adaptation(self):
         # Проверяем адаптацию ML
         if hasattr(self, 'ml_client') and self.ml_client.running:
-            self.ml_client.get_prediction()
+            self.ml_client.get_prediction(future_minutes=20)
+        
+        self.db.log_command(
+            source='main_app',
+            command='check_ml_adaptation',
+            parameters=f"{now() + timedelta(minutes=20)}",
+            success=True
+        )
     
     @Slot(dict)
     def on_robot_positions(self,positions):
@@ -402,11 +466,11 @@ class MainWindow(QMainWindow):
         self.log_message(f"Robot error: {error}")
 
     def on_robot_connect(self):
-        self.ui.Label_robot_status.setText(f"Robot подключен")
+        self.ui.Label_robot_status.setText(f" Robot подключен")
         self.log_message("Robot connected")
 
     def on_robot_disconnect(self):
-        self.ui.Label_robot_status.setText(f"Robot отключен")
+        self.ui.Label_robot_status.setText(f" Robot отключен")
         self.log_message("Robot disconnected")
     
     def on_ml_prediction(self, prediction):
@@ -414,6 +478,7 @@ class MainWindow(QMainWindow):
         confidencce= prediction.get('confidence', 0.0)
 
         self.log_message(f"ML prediction: requires_adaptation={requires_adaptation}, confidence={confidencce}")
+        logger.info(f"ML prediction: requires_adaptation={requires_adaptation}, confidence={confidencce}")
 
         if requires_adaptation and not self.adaptive_mode:
             self.enable_adaptive_mode()
@@ -424,19 +489,19 @@ class MainWindow(QMainWindow):
         self.log_message(f"ML error: {error}")
     
     def on_ml_connect(self):
-        self.ui.Label_ML_status.setText(F"ML подключена")
+        self.ui.Label_ML_status.setText(F" ML подключена")
         self.log_message("ML connected")
     
     def on_ml_disconnect(self):
-        self.ui.Label_ML_status.setText(F"ML отключена")
+        self.ui.Label_ML_status.setText(F" ML отключена")
         self.log_message("ML disconnected")
 
     def enable_adaptive_mode(self):
         self.adaptive_mode = True
         self.log_message("Adaptive mode enabled")
-        self.ui.Label_adaptive_mode.setText(f"Адаптивный режим вкл")
+        self.ui.Label_adaptive_mode.setText(f" Адаптивный режим вкл")
 
-        self.adaptation.apply_simple_style(self.ui)
+        self.adaptation.apply_adaptive_style(self.ui)
 
         #Отправляем команду адаптацию робота
         if hasattr(self, 'robot_client') and self.robot_client.running:
@@ -445,7 +510,7 @@ class MainWindow(QMainWindow):
     def disable_adaptive_mode(self):
         self.adaptive_mode = False
         self.log_message("Adaptive mode disabled")
-        self.ui.Label_adaptive_mode.setText(f"Адаптивный режим выкл")
+        self.ui.Label_adaptive_mode.setText(f" Адаптивный режим выкл")
         self.adaptation.apply_normal_style(self.ui)
         #Отправляем команду на возврат к обычному режиму робота
         if hasattr(self, 'robot_client') and self.robot_client.running:
@@ -453,9 +518,18 @@ class MainWindow(QMainWindow):
 
     
     @Slot()
-    def update_time(self):
+    def update_time_and_check_events(self):
         current_time = now().strftime( "%H:%M:%S")
-        self.ui.TimeLabel.setText(current_time)
+        self.ui.TimeLabel.setText(f"{current_time}")
+        self.ui.last_survey.setText(f"До следующего опроса: {self.next_survey_time - now()}")
+
+        if now() >= self.next_survey_time:
+            self.show_survey_notification()
+            self.schedule_next_survey()
+
+        if now() >= self.next_ml_check_time:
+            self.check_ml_adaptation()
+            self.schedule_next_ml_check()
 
     def log_message(self, message):
         #Логирование сообщений в интерфейс
@@ -484,701 +558,7 @@ def main():
 if __name__ == "__main__":
     main()
 
-client_App_ml:
-import websockets
-import asyncio
-import json
-from database import Database
-import logging
-
-from typing import Optional,Dict,Any, List
-import threading
-from threading import Thread
-from PySide6.QtCore import Signal, QObject
-
-from time_controller import now 
-
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
-
-class MLClient(QObject):
-    connected = Signal()
-    disconnected = Signal()
-    predictions_received = Signal(dict)
-    error_occurred = Signal(str)
-
-    def __init__(self, uri: str = "ws://localhost:8766", prediction_interval: float = 60.0):
-        super().__init__()
-        self.uri = uri
-        self.websocket: Optional[websockets.WebSocketClientProtocol] = None
-        self.running = False
-        self.db = Database()
-        self.loop: Optional[asyncio.AbstractEventLoop] = None
-        self.prediction_interval = prediction_interval
-        self.last_prediction: Optional[Dict[str, Any]] = None
-
-        self._reconnect_attempts = -1 # -1 - бесконечно
-        self._reconnect_delay = 1 # начальная задержка
-        self._max_reconnect_delay = 60 # максимальная задержка
-        self._reconnect_task: Optional[asyncio.Task]  = None 
-        self._monitor_task: Optional[asyncio.Task] = None
-
-    
-    async def _monitor_predictions(self):
-        while self.websocket and self.running:
-            try:
-                await self.get_prediction_async()
-                await asyncio.sleep(self.prediction_interval)
-            except Exception as e:
-                logger.error(f"Error while monitoring predictions: {e}")
-                self.error_occurred.emit(str(e))
-                raise
-    
-    async def get_prediction_async(self, timestamp = None) -> Dict[str, Any]:
-        if not self.websocket or not self.running:
-            raise ConnectionError("Not connected to server")
-        try:
-            if timestamp is None:
-                timestamp = now()
-            message = {
-                "command": "predict",
-                "timestamp": timestamp.isoformat()
-                }
-            await self.websocket.send(json.dumps(message))
-            response = await self.websocket.recv()
-            result  = json.loads(response)
-
-            if result.get('type') == 'prediction':
-                self.last_prediction = result
-
-                features = {
-                    'hour': timestamp.hour,
-                    'day_of_week': timestamp.weekday
-                }
-
-                self.db.log_ml_prediction(
-                                    features=features,
-                                    prediction=result.get('prediction'),
-                                    coffidence=result.get('confidence'),
-                                    threshold_used=result.get('threshold',0.8),
-                                    adaptation_triggered=result.get('requires_adaptation',False)
-                                    )
-
-                self.predictions_received.emit(result)
-            return result
-        
-        except Exception as e:
-            logger.error(f"Error while getting prediction: {e}")
-            raise
-
-    async def should_adapt_interface(self):
-        """Определяет, нужно ли адаптировать интерфейс"""
-        if not self.last_prediction:
-            await self.get_prediction_async()
-
-        return self.last_prediction.get('requires_adaptation', False)
-    
-    async def get_adaptation_level(self):
-        """Возвращает уровень адаптации (0.0-1.0)"""
-        if not self.last_prediction:
-            await self.get_prediction_async()
-
-        confidence = self.last_prediction.get('confidence', 0.0)
-        threshold = self.last_prediction.get('threshold', 0.8)
-
-        if confidence <= threshold:
-            return 0.0
-        else:
-            return min(1.0, (confidence-threshold)/(1.0-threshold))
-
-    async def send_training_data_async(self, X:List, y:List):
-         """Отправляет данные для дообучения модели"""
-         if not self.websocket or not self.running:
-            raise ConnectionError("Not connected to server")
-         try:
-            message = {
-                "command": "retrain",
-                "X": X,
-                "y": y
-                }
-            await self.websocket.send(json.dumps(message))
-            response = await self.websocket.recv()
-            result  = json.loads(response)
-            return result
-        
-         except Exception as e:
-            logger.error(f"Error while sending training data: {e}")
-            raise
-    
-    def start(self):
-        self.loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(self.loop)
-        self.running = True
-        try:
-            self._reconnect_task=self.loop.create_task(self._run_reconnecting())
-            self.loop.run_until_complete(self._reconnect_task)
-        except Exception as e:
-            logger.error(f"Error while starting client: {e}")
-        finally:
-            if self.loop and not self.loop.is_closed():
-                tasks= asyncio.all_tasks(self.loop)
-                for task in tasks:
-                    task.cancel()
-                self.loop.run_until_complete(asyncio.gather(*tasks,return_exceptions=True))
-                self.loop.close()
-                logger.info("Client event loop stopped")
-        
-    async def _run_reconnecting(self):
-        while self.running:
-            try:
-                await self._connect_with_retry()
-                await self._run_connected()
-            except asyncio.CancelledError:
-                break
-            except Exception as e:
-                logger.error(f"Connection error in main loop: {e} ")
-                self.error_occurred.emit(str(e))
-                if self.running:
-                    await asyncio.sleep(self._reconnect_delay)
-            finally:
-                await self._close_connection()
-
-    async def _connect_with_retry(self):
-        attempt = 0
-        while self.running:
-            try:
-                self.websocket = await websockets.connect(self.uri)
-                logger.info(f"Connected to {self.uri}")
-                self.db.log_command("ml", "connect", f"uri: {self.uri}", True)
-                self.connected.emit()
-                return
-            except Exception as e:
-                logger.warning(f"Connection attempt {attempt+1} failed: {e}")
-                if self._reconnect_attempts != -1 and attempt >= self._reconnect_attempts:
-                    raise # Превышено количество попыток
-                delay =  min(self._reconnect_delay*(2**attempt), self._max_reconnect_delay)
-                attempt += 1
-                await asyncio.sleep(delay)
-
-    async def _run_connected(self):
-        self._monitor_task = self.loop.create_task(self._monitor_predictions())
-        try:
-            await self._monitor_task
-        except asyncio.CancelledError:
-            pass
-        except Exception as e:
-            logger.error(f"Monitor task failed: {e}")
-            raise
-    
-    async def _close_connection(self):
-        if self.websocket:
-            await self.websocket.close()
-            self.websocket = None
-            logger.info("Disconnected from server")
-            self.disconnected.emit()
-
-    def run_in_thread(self):
-        thread = threading.Thread(target=self.start, daemon=True)
-        thread.start()
-        return thread
-
-    def get_prediction(self):
-        """Запрашивает предсказание из главного потока"""
-        if not self.running or not self.loop or self.loop.is_closed():
-            logger.warning("Cannot get prediction: client not running")
-            return
-        
-        asyncio.run_coroutine_threadsafe(
-            self.get_prediction_async(),
-            self.loop
-        )
-
-    def send_training_data(self, X: list, y: list):
-        """Отправляет данные для обучения из главного потока"""
-        if not self.running or not self.loop or self.loop.is_closed():
-            logger.warning("Cannot send training data: client not running")
-            return
-        
-        asyncio.run_coroutine_threadsafe(
-            self.send_training_data_async(X, y),
-            self.loop
-        )
-
-    def stop(self):
-        self.running=False
-        if self.loop and self.loop.is_running():
-            asyncio.run_coroutine_threadsafe(self._shutdown(), self.loop)
-        
-    async def _shutdown(self):
-        if self._reconnect_task and not self._reconnect_task.done():
-            self._reconnect_task.cancel()
-            try:
-                await self._reconnect_task
-            except asyncio.CancelledError:
-                pass
-        if self._monitor_task and not self._monitor_task.done():
-            self._monitor_task.cancel()
-            try:
-                await self._monitor_task
-            except asyncio.CancelledError:
-                pass
-        await self._close_connection()
-    
-client_App_pybullet:
-import websockets
-import asyncio
-import json
-import logging
-import threading 
-from typing import Optional,Dict,Any
-from database import Database
-from PySide6.QtCore import Signal, QObject
-
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
-
-class PyBulletClient(QObject):
-
-    connected = Signal()
-    disconnected = Signal()
-    positions_received = Signal(dict)
-    error_occurred = Signal(str)
-    command_response = Signal(str)
-
-    def __init__(self, uri: str ="ws://localhost:8765"):
-        super().__init__()
-        self.uri = uri
-        self.websocket: Optional[websockets.WebSocketClientProtocol] = None
-        self.running =False
-        self.loop: Optional[asyncio.AbstractEventLoop] = None
-        self.db = Database()
-
-        self._reconnect_attempts = -1 # -1 - бесконечно
-        self._reconnect_delay = 1 # начальная задержка
-        self._max_reconnect_delay = 60 # максимальная задержка
-        self._reconnect_task: Optional[asyncio.Task]  = None 
-        self._monitor_task: Optional[asyncio.Task] = None
-
-    async def connect_async(self):
-        try: 
-            self.websocket=await websockets.connect(self.uri)
-            self.running =True
-            logger.info(f"connect to {self.uri}")
-            
-            self.connected.emit()
-            
-            self.db.log_command("pybullet", "connect", f"uri: {self.uri}", True)
-
-            # Запускаем мониторинг позиций
-            asyncio.create_task(self._monitor_positions())
-
-        except Exception as e:
-            logger.error(f"Error while connecting: {e}")
-            self.db.log_command("pybullet", "connect", f"uri: {self.uri}", False)
-            raise
-    
-    async def _monitor_positions(self):
-        try:
-            async for message in self.websocket:
-                data =json.loads(message)
-                if data.get('type') == 'positions':
-                    positions = {
-                        'JointPositions':data.get('JointPositions',), 
-                        'FramePositions':data.get('FramePositions'),
-                        'End_effector_Orientation':data.get('End_effector_Orientation'),
-                        }
-                    self.positions_received.emit(positions)
-                else:
-                    response=data.get('message')
-                    
-                    self.command_response.emit(response)
-        except Exception as e:
-            logger.error(f"Error while monitoring positions: {e}")
-            self.error_occurred.emit(str(e))
-            raise
-            
-                
-                
-    async def send_command_async(self, command: str, **kwargs) -> dict[str, Any]:
-        # Отправляет команду на сервер симуляции
-        if not self.websocket or not self.running:
-            raise ConnectionError("Not connected to server")
-        try:
-            message = {"command": command, **kwargs}
-            await self.websocket.send(json.dumps( message))
-            logger.info(f"Sending command: {message}")
-
-            params_str = json.dumps(kwargs) if kwargs else {}
-
-            self.db.log_command("send_pybullet_client", command, params_str, True)
-
-        except Exception as e:
-            logger.error(f"Error while sending command: {e}")
-            self.db.log_command("pybullet_client", command, json.dumps(kwargs), False)
-            raise
-        
-    async def disconnect_async(self):
-        if self.websocket:
-            await self.websocket.close()
-            self.running=False
-            self.disconnected.emit()
-            logger.info("Disconnected from server")
-
-    def start(self):
-        self.loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(self.loop)
-        self.running=True
-        try:
-            self._reconnect_task=self.loop.create_task(self._run_reconnecting())
-            self.loop.run_until_complete(self._reconnect_task)
-        except Exception as e:
-            logger.error(f"Error while starting client: {e}")
-        finally:
-            # Очистка при завершении
-            if self.loop and not self.loop.is_closed():
-                if self.loop.is_running():
-                    self.loop.stop()
-                # Завершаем все задачи
-                tasks = asyncio.all_tasks(self.loop)
-                if tasks:
-                    for task in tasks:
-                        if not task.done():
-                            task.cancel()
-                    # Даем задачам время на завершение
-                    self.loop.run_until_complete(
-                        asyncio.gather(*tasks, return_exceptions=True)
-                    )
-                self.loop.close()
-            self.loop = None
-            logger.info("Client event loop stopped")
-
-    async def _run_reconnecting(self):
-        while self.running:
-            try:
-                await self._connect_with_retry()
-                await self._run_connected()
-            except asyncio.CancelledError:
-                break
-            except Exception as e:
-                logger.error(f"Connection error in main loop: {e} ")
-                self.error_occurred.emit(str(e))
-                if self.running:
-                    await asyncio.sleep(self._reconnect_delay)
-            finally:
-                await self._close_connection()
-
-    async def _connect_with_retry(self):
-        """Пытается подключиться с экспоненциальной задержкой"""
-        attempt = 0
-        while self.running:
-            try:
-                self.websocket = await websockets.connect(self.uri)
-                logger.info(f"Connected to {self.uri}")
-                self.db.log_command("pybullet", "connect", f"uri: {self.uri}", True)
-                self.connected.emit()
-                return
-            except Exception as e:
-                logger.warning(f"Connection attempt {attempt+1} failed: {e}")
-                if self._reconnect_attempts != -1 and attempt >= self._reconnect_attempts:
-                    raise # Превышено количество попыток
-                delay =  min(self._reconnect_delay*(2**attempt), self._max_reconnect_delay)
-                attempt += 1
-                await asyncio.sleep(delay)
-
-    async def _run_connected(self):
-        """Запускаем мониторинг и ждет его завершения"""
-        self._monitor_task = asyncio.create_task(self._monitor_positions())
-        try:
-            await self._monitor_task
-        except asyncio.CancelledError:
-            #Штатная остановка 
-            pass
-        except Exception as e:
-            logger.error(f"Monitor task failed: {e}")
-            raise
-
-    async def _close_connection(self):
-        if self.websocket:
-            await self.websocket.close()
-            self.websocket = None
-            self.disconnected.emit()
-            logger.info("Disconnected from server")
-
-
-    def run_in_thread(self):
-        thread = threading.Thread(target=self.start, daemon=True)
-        thread.start()
-        return thread
-    
-    def send_command(self, command: str, **kwargs):
-        """Отправляет команду из главного потока"""
-        if not self.running or not self.loop or self.loop.is_closed():
-            logger.warning("Cannot send command: client not running")
-            return
-        
-        # Используем thread-safe вызов
-        asyncio.run_coroutine_threadsafe(
-            self.send_command_async(command, **kwargs),
-            self.loop
-        )
-    
-    def stop(self):
-        self.running=False
-        if self.loop and self.loop.is_running():
-            asyncio.run_coroutine_threadsafe(self._shutdown(), self.loop)
-
-    async def _shutdown(self):
-        """Корутина для корректной остановки клиента"""
-        # Отменяем задачу переподключения
-        if self._reconnect_task and not self._reconnect_task.done():
-            self._reconnect_task.cancel()
-            try:
-                await self._reconnect_task
-            except asyncio.CancelledError:
-                pass
-
-        #Отменяем мониторинг
-        if self._monitor_task and not self._monitor_task.done():
-            self._monitor_task.cancel()
-            try:
-                await self._monitor_task
-            except asyncio.CancelledError:
-                pass
-
-        # Закрываем соединение
-        await self._close_connection()
-
-database:
-import sqlite3
-from datetime import timedelta
-import os
-from typing import List, Optional, Dict, Any
-import threading 
-import json
-import logging
-
-from time_controller import now
-
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
-
-class Database:
-    def __init__(self, db_name="adaptive_robot.db"):
-        current_dir = os.path.dirname(os.path.abspath(__file__))
-        db_path = os.path.join(current_dir, db_name)
-        self.db = db_path
-        self.connection = sqlite3.connect(db_path, check_same_thread=False)
-        self.connection.row_factory = sqlite3.Row  # возвращает словари вместо кортежей 
-        self.create_tables()
-
-        # Таймер для управления частотой опросов
-        self.survey_timer = None
-        self.survey_interval = 30*60
-        self.survey_callback = None
-        self.survey_thread = None
-
-
-    def create_tables(self):
-        cursor = self.connection.cursor()
-
-        # Таблица для опросов
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS survey_response (
-            id integer PRIMARY KEY AUTOINCREMENT,
-            timestamp DATETIME,
-            fatigue_level integer CHECK(FATIGUE_LEVEL >= 0 AND FATIGUE_LEVEL <= 10),
-            hour_of_day integer,
-            day_of_week integer
-            )
-        """)
-
-        # Таблица для телеметрии
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS robot_telemetry(
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                timestamp DATETIME not null,
-                positions TEXT,
-                velocity REAL,
-                adaptive_mode TEXT
-                )
-        """)
-
-        # Таблица для логов команд
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS command_log(
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                timestamp DATETIME not null,
-                source TEXT,
-                command TEXT,
-                parameters TEXT,
-                success BOOLEAN
-                )
-        """)
-
-        # Таблица для ML
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS ml_predictions(
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                timestamp DATETIME not null,
-                hour_of_day INTEGER,
-                day_of_week INTEGER,
-                features TEXT, 
-                prediction boolean, 
-                confidence REAL,
-                threshold_used REAL, 
-                adaptation_triggered boolean
-                )
-        """)
-
-        # JSON с признаками
-            # Предсказание (уставший/не уставший)
-            # Уверенность модели (0.0-1.0)
-            # Порог, который использовался
-            # Была ли запущена адаптация
-        self.connection.commit()
-
-    def start_survey_scheduler(self,callback):
-        """Запускает планировщик опросов в отдельном потоке"""
-        self.survey_callback = callback
-        def survey_worker():
-            while True:
-                try:
-                    # Ждем интервал
-                    threading.Event().wait(self.survey_interval)
-                    # Вызываем callback в главном потоке
-                    if self.survey_callback:
-                        # Нужно будет вызвать через QTimer или QMetaObject.invokeMethod
-                        # Пока просто логируем
-                        
-                        logger.info("Survey time! (Need to trigger in main thread)")
-                        
-                        # Обновляем интервал на основе количества опросов
-                        self._update_survey_interval()
-                
-                except Exception as e:
-                    logger.error(f"Error while monitoring survey: {e}")
-                    raise
-        
-        self.survey_thread = threading.Thread(target=survey_worker, daemon=True)
-        self.survey_thread.start()
-        logger.info(f"Survey scheduler started with interval {self.survey_interval}s")
-
-
-    def save_survey(self, fatigue_level: int):
-        cursor = self.connection.cursor()
-        current_time = now()
-
-        cursor.execute("""
-            INSERT INTO Survey_response (timestamp, fatigue_level, hour_of_day, day_of_week)
-            values(?,?,?,?)
-        """,
-            (current_time, fatigue_level, current_time.hour, current_time.weekday()))
-        self.connection.commit()
-       
-        self._update_survey_interval()
-
-        return cursor.lastrowid
-    
-    def _update_survey_interval(self):
-        """Обновляет интервал опросов на основе количества данных"""
-        cursor = self.connection.cursor()
-        cursor.execute("SELECT COUNT(*) FROM survey_response")
-        count = cursor.fetchone()[0]
-        if count < 1440: # первый месяц
-            self.survey_interval_minutes = 30 # 30 мин
-        elif count <= 2880: # второй месяц
-            self.survey_interval_minutes = 60 # 1 час
-        else: # после второго месяца
-            self.survey_interval_minutes = 120 # 2 часа
-
-
-    def save_telemetry(self, positions: str, velocity:float, adaptive_mode: bool=False):
-        #Сохраняет телеметрию, поддерживая максимум 50 записей
-        cursor = self.connection.cursor()
-
-        # Удаляем старые записи, если больше 50
-        cursor.execute("SELECT COUNT(*) FROM robot_telemetry")
-        count = cursor.fetchone()[0]
-        if count > 50:
-            cursor.execute("""DELETE FROM robot_telemetry 
-            WHERE id IN( 
-                SELECT id FROM robot_telemetry
-                ORDER BY timestamp ASC
-                LIMIT ?
-            ) 
-            """, (count - 49,))
-        positions_json=json.dumps(positions)
-        # Вставляем новую запись
-        cursor.execute("""
-            INSERT INTO robot_telemetry 
-            (timestamp, positions, velocity, adaptive_mode)
-            values(?,?,?,?)
-        """,
-            (now(), positions_json, velocity, adaptive_mode))
-        self.connection.commit()
-    
-    def log_command(self, source: str, command: str, parameters: str, success: bool = True):
-        # Логирует команды межды компонентами
-        cursor = self.connection.cursor()
-
-        cursor.execute("SELECT COUNT(*) FROM command_log")
-        count_log = cursor.fetchone()[0]
-        if count_log > 300:
-            cursor.execute("""DELETE FROM command_log 
-            WHERE id IN( 
-                SELECT id FROM command_log
-                ORDER BY timestamp ASC
-                LIMIT ?
-            ) 
-            """, (count_log - 299,))
-
-        # Если parameters - это dict, преобразуем в строку
-        if isinstance(parameters, dict):
-            parameters = json.dumps(parameters)
-        cursor.execute("""
-            INSERT INTO command_log (timestamp, source, command, parameters, success)
-            values(?,?,?,?,?)
-        """,
-            (now().strftime("%Y-%m-%d %H:%M:%S"), source, command, parameters, success))
-        self.connection.commit()
-
-    def get_training_data(self, limit: int= 1000):
-        cursor = self.connection.cursor()
-        cursor.execute("""
-            SELECT hour_of_day, day_of_week, fatigue_level
-            FROM Survey_response
-            ORDER BY timestamp DESC
-            LIMIT ?
-            """, (limit,))  
-        return cursor.fetchall()
-    
-    def log_ml_prediction(self, features:dict, prediction:bool,
-                        coffidence:float, threshold_used:float,
-                        adaptation_triggered:bool):
-        """Логирует предсказание ML модели"""
-        cursor = self.connection.cursor()
-        features_json = json.dumps(features)
-        current_time = now()
-        cursor.execute("""
-            INSERT INTO ml_predictions (timestamp, hour_of_day, day_of_week, features, prediction, confidence, threshold_used, adaptation_triggered)
-            values(?,?,?,?,?,?,?,?)
-        """,
-            (current_time.strftime("%Y-%m-%d %H:%M:%S"), current_time.hour, current_time.weekday(), features_json, prediction, coffidence, threshold_used, adaptation_triggered))
-        self.connection.commit()
-
-    def stop_survey_scheduler(self):
-        """Останавливает планировщик опросов"""
-        if self.survey_thread and self.survey_thread.is_alive():
-            # Нет простого способа остановить, но поток daemon=True
-            # сам завершится при завершении программы
-            pass
-    
-    def close(self):
-        self.stop_survey_scheduler()
-        if self.connection:
-            self.connection.close()
-
-main_simulation:
+Main_simulation.py:
 import pybullet as p
 import pybullet_data
 import time
@@ -1416,7 +796,7 @@ class KukaRobot:
         logger.info(f"SSM zones visualized: mode={self.current_ssm_mode}, inner={inner_radius}, outer={outer_radius}")
         
         
-    async def set_adaptive_mode(self, adaptive_mode, speed_mode_type):
+    def set_adaptive_mode(self, adaptive_mode, speed_mode_type):
         if adaptive_mode:
             ssm_zone_type = 'restricted'
         else:
@@ -1678,7 +1058,8 @@ if __name__ == "__main__":
         robot.disconnect()
                         
 
-ml_model:
+ml_model.py:
+
 import numpy as np
 import pickle
 import os
@@ -1697,7 +1078,7 @@ class FatiguePredictor:
         self.model_path = model_path
         self.model: Optional[LogisticRegression] = None
         self.scaler = StandardScaler()
-        self.confidence_threshold = 0.8 # Порог уверенности для адаптации
+        self.confidence_threshold = 0.65 # Порог уверенности для адаптации
 
         if os.path.exists(model_path):
             self.load_model()
@@ -1705,65 +1086,75 @@ class FatiguePredictor:
             self.initialize_model()
             # Если модель не найдена, создаем новую
 
-    
-    def initialize_model(self):
-        """Инициализирует новую модель с начальными данными"""
-        # Начальные фиктивные данные для инициализации
-        # В реальности здесь можно добавить базовые паттерны
-        initial_X = np.array([
-            [8, 0], [9, 0], [10, 0],  # Утро, понедельник - не уставший
-            [14, 0], [15, 0], [16, 0],  # День, понедельник
-            [17, 0], [18, 0], [19, 0],  # Вечер, понедельник - уставший
-            [8, 4], [9, 4], [10, 4],    # Утро, пятница
-            [14, 4], [15, 4], [16, 4],  # День, пятница
-        ])
+    def _raw_features(self, hour: int, day_of_week: int):
+        #Час дня (преобразуем в циклические признаки
+        hour_sin = np.sin(2 * np.pi * hour / 24)
+        hour_cos = np.cos(2 * np.pi * hour / 24)
+        # Количество часов с начала рабочего дня (предполагаем 9:00 начало)
+        hours_since_start = max(0, hour-9)
+        # Послеобеденное время (после 13:00)
+        is_afternoon = 1 if hour >= 14 else 0.0
 
-        initial_y = np.array([0, 0, 0, 0, 0, 0, 1, 1, 1, 0, 0, 0, 0, 0, 0])
+        return np.array([hour_sin, hour_cos, day_of_week, hours_since_start, is_afternoon])
 
-        self.model = LogisticRegression()
-        X_scaled = self.scaler.fit_transform(initial_X)
-        self.model.fit(X_scaled, initial_y)
-
-        self.save_model()
 
     def extract_features(self, timestamp: None) -> np.ndarray:
         #"""Извлекает признаки из времени"""
         if timestamp is None:
             timestamp = now()
-
-        #Час дня (преобразуем в циклические признаки
-        hour = timestamp.hour
-        hour_sin = np.sin(2 * np.pi * hour / 24)
-        hour_cos = np.cos(2 * np.pi * hour / 24)
-
-        # День недели
         day_of_week = timestamp.weekday() # 0=понедельник, 6=воскресенье
-        
-        # Количество часов с начала рабочего дня (предполагаем 9:00 начало)
-        hours_since_start = max(0, hour-9)
+        hour = timestamp.hour
+        return self._raw_features(hour, day_of_week)
 
-        # Послеобеденное время (после 13:00)
-        is_afternoon = 1 if hour >= 14 else 0
+    
+    def initialize_model(self):
+        """Инициализирует новую модель с начальными данными"""
+        # Начальные фиктивные данные для инициализации
+        X_synth, y_synth = [], []
 
-        return np.array([hour_sin, hour_cos, day_of_week, hours_since_start, is_afternoon])
+        # Генерируем примеры для будних дней с 8 до 19
+        for hour in range(8, 20):
+            for day in range(5): # Пятница
+                X_synth.append(self._raw_features(hour, day))
+                y_synth.append(1 if hour >= 17 else 0)
+        X_synth = np.array(X_synth)
+        y_synth = np.array(y_synth)
+
+        # Обучаем scaler и модель
+        self.scaler.fit(X_synth)
+        X_scaled = self.scaler.fit_transform(X_synth)
+        self.model = LogisticRegression()
+        self.model.fit(X_scaled, y_synth)
+        self.save_model()
+        logger.info("Initial model created with synthetic data")
+
 
     def predict(self, timestamp: None) -> Tuple[bool,float]:
-        """Предсказывает усталость и возвращает уверенность"""
+        """Предсказывает усталость и возвращает предсказание и уверенность"""
         if self.model is None:
             return False, 0.0
+        if timestamp is None:
+            timestamp = now()
 
-        features = self.extract_features(timestamp)
+        features = self.extract_features(timestamp).reshape(1,-1)
         features_scaled = self.scaler.transform(features)
 
-        probability = self.model.predict_proba(features_scaled)[0,1]
-        prediction = probability > self.confidence_threshold
-        return prediction, probability
+        prob_class1 = self.model.predict_proba(features_scaled)[0,1]
+        prob_class0 = 1 - prob_class1
+        prediction =  prob_class1 > self.confidence_threshold
+        # Уверенность в принятом решении
+        if prediction:
+            confidence = prob_class1  # уверен, что устал
+        else:
+            confidence = prob_class0  # уверен, что не устал
+        return prediction,  confidence, prob_class1
     
     def train(self, X: np.ndarray, y: np.ndarray):
         """Дообучает модель на новых данных"""
         if self.model is None:
             self.initialize_model()
-
+        
+        self.scaler.fit(X)
         X_scaled = self.scaler.transform(X)
         self.model.fit(X_scaled, y)
         self.save_model()
@@ -1789,7 +1180,7 @@ class FatiguePredictor:
                 data = pickle.load(f)
                 self.model = data["model"]
                 self.scaler = data["scaler"]
-                self.confidence_threshold = data.get('threshold', 0.8)
+                self.confidence_threshold = data.get('threshold', self.confidence_threshold)
             logger.info(f"Model loaded from {self.model_path}")
         except Exception as e:
             logger.error(f"Failed to load model: {e}")
@@ -1801,11 +1192,11 @@ import websockets
 from websockets.asyncio.server import serve
 import json
 import signal
-from ml_model import FatiguePredictor
-from database import Database
 import logging
 import numpy as np
 
+from ml_model import FatiguePredictor
+from database import Database
 from time_controller import now
 
 logging.basicConfig(level=logging.INFO)
@@ -1831,37 +1222,33 @@ class MLServer:
                 try:
                     data = json.loads(message)
                     command = data.get('command')
-                    logger.info(f"ML resived: {data}")
+                    logger.info(f"ML resived time:{now()} data: {data}")
 
                     if command == 'predict':
                         timestamp_str = data.get('timestamp')
                         if timestamp_str:
                             try:
                                 from datetime import datetime
-                                timestamp = datetime.fromtimestamp(timestamp)
+                                timestamp = datetime.fromisoformat(timestamp_str.replace('Z', '+00:00'))
                             except:
                                 timestamp = now()
                         else:
                             timestamp = now()
                          
-
-                        hour = timestamp.hour
-                        day_of_week = timestamp.weekday
-
-                        prediction, confidence  = self.model.predict([[hour, day_of_week]])
+                        prediction, confidence, prob_class1  = self.model.predict(timestamp)
                         
                         response = {
                             'type': 'prediction',
                             'prediction': bool(prediction),
                             'confidence': float(confidence),
                             'threshold_used': float(self.model.confidence_threshold),
-                            'requires_adaptation': confidence > self.model.confidence_threshold,
+                            'requires_adaptation': bool(prob_class1 > self.model.confidence_threshold),
                             'timestamp': timestamp.isoformat()
                         }
 
                         #Логируем предсказание
                         self.db.log_command(
-                            source="ml_client",
+                            source="server_ml",
                             command="predict",
                             parameters= f"timestamp: {timestamp}, prediction: {prediction}, confidence: {confidence:.2f}",
                             success=True
@@ -1869,12 +1256,12 @@ class MLServer:
 
                         await websocket.send(json.dumps(response))
                         logger.info(f"ML send: {response}")
-                    
+                        """
                     elif command == 'retrain':
                         # Запрос на дообучение модели
 
-                        X_data = data.get('X', [])
-                        y_data = data.get('y', [])
+                        X_data = data.get('X')
+                        y_data = data.get('y')
 
                         if X_data and y_data:
                             X = np.array(X_data)
@@ -1886,6 +1273,7 @@ class MLServer:
                                 'accuracy': float(accuracy),
                                 'message': 'Model retrained successfully.'
                             }
+                        
 
                         else:
                             response = {
@@ -1894,6 +1282,7 @@ class MLServer:
                             }
 
                         await websocket.send(json.dumps(response))
+                        """
 
                     else:
                         response = {
@@ -1914,11 +1303,40 @@ class MLServer:
                             }))
         except websockets.exceptions.ConnectionClosed:
             logger.info(f"ML client disconnected: {client_address}")
+
+    async def periodic_model_update(self):
+        """Переобучение каждые 5 минут"""
+        while self.running:
+            await self.wait_virtual(300) # 5 минут
+            try:
+                rows = self.db.get_training_data(limit=500)
+                if len(rows)<10:
+                    continue
+                X,y = [],[]
+                for row in rows:
+                    timestamp_str = row['timestamp']
+                    try:
+                        from datetime import datetime
+                        timestamp = datetime.fromisoformat(timestamp_str)
+                    except:
+                        continue
+                    X.append(self.model.extract_features(timestamp))
+                    fatigue_level = row['fatigue_level']
+                    concentration_level = row['concentration_level']
+                    # Цель: устал если усталость >=6 и концентрация <=4
+                    target = 1 if (fatigue_level >= 6 and concentration_level <= 4) else 0
+                    y.append(target)
+                if len(X)>0:
+                    X = np.array(X)
+                    y = np.array(y)
+                    self.model.train(X, y)
+                    logger.info('Predictor model updated complete')
+            except Exception as e:
+                logger.error(f"Failed to update model: {e}")
     
     async def start(self):
         # Запускаем сервер
         self.running = True
-
         async with serve(self.handle_client, self.host, self.port) as server:
 
         # Запускаем периодическую задачу обновления модели
@@ -1926,27 +1344,12 @@ class MLServer:
             self.server = server
         # Ждем завершения
             await server.serve_forever()
-
-    async def periodic_model_update(self):
-        while self.running:
-            try: 
-                # Каждые 5 минут пытаемся дообучить модель
-                await asyncio.sleep(300)
-                
-                training_data = self.db.get_training_data()
-                if len(training_data)> 20:  # Минимум 10 записей
-                    X=[]
-                    y=[]
-
-                    for row in training_data:
-                        X.append([row['hour_of_day'], row['day_of_week']])
-                        y.append(1 if row['fatigue_level']>=7 else 0) # Уставший если оценка >= 7
-
-                    if len(y)>0:
-                        self.model.train(np.array(X), np.array(y))
-                        logger.info('Predictor model updated complete')
-            except Exception as e:
-                logger.error(f"Failed to update model: {e}")
+        
+    
+    async def wait_virtual(self, virtual_seconds: float):
+        start = now()
+        while (now() - start).total_seconds() < virtual_seconds:
+            await asyncio.sleep(0.1)
     
     def stop(self):
         # Останавливаем сервер
@@ -1955,6 +1358,7 @@ class MLServer:
             self.server.close()
         self.db.close()
         logger.info("ML Server stopped")
+
     
 async def main():
     server = MLServer()
@@ -1972,236 +1376,7 @@ async def main():
 if __name__ == "__main__":
     asyncio.run(main())
 
-server_pybullet:
-import asyncio
-import websockets
-import json
-import time
-from threading import Thread
-import logging
-from main_simulation import KukaRobot
-from database import Database
-
-from time_controller import now
-
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
-
-class PybulletServer:
-    def __init__(self, host="localhost", port=8765):
-        self.host = host
-        self.port = port
-        self.robot = KukaRobot(gui=True)
-        self.robot.connect()
-        self.db = Database()
-        self.adaptive_mode = False
-        self.clients = set()
-
-    async def register(self,websocket):
-        self.clients.add(websocket)
-        print(f"New client: {websocket.remote_address}")
-    
-    async def unregister(self,websocket):
-        self.clients.remove(websocket)
-        print(f"Client disconnected: {websocket.remote_address}")
-
-    
-    async def broadcast_positions(self):
-        """Передает текущие позиции суставов"""
-        while True:
-            try:
-                positions = self.robot.get_joint_positions()
-                message = {
-                    'type': 'positions',
-                    'JointPositions': positions.get('JointPositions'),
-                    'FramePositions': positions.get('FramePositions'),
-                    'End_effector_Orientation': positions.get('End_effector_Orientation'),
-                    'timestamp': time.time(),
-                    'virtual_time': now().isoformat(),
-                    'adaptive_mode': self.adaptive_mode,
-                    'speed_factor': positions.get('velosity')
-                }
-                
-
-                self.db.save_telemetry(
-                    positions=f'joint_positions:{positions.get('JointPositions')}, frame_positions:{positions.get("FramePositions")}, end_effector_orientation:{positions.get("End_effector_Orientation")}',
-                    velocity=positions.get('velosity'),
-                    adaptive_mode=self.adaptive_mode
-                )
-                try:
-                    await asyncio.gather(
-                        *[asyncio.create_task(client.send(json.dumps(message))) for client in self.clients]
-                    )
-                    
-                except Exception as e:
-                    logger.error(f"Error while broadcasting positions: {e}")
-                    
-                await asyncio.sleep(0.1)
-            except Exception as e:
-                logger.error(f"Error while broadcasting positions: {e}")
-                break
-
-    async def handle_client(self,websocket):
-        await self.register(websocket)
-        client_address = websocket.remote_address
-        logger.info(f"Client connected: {client_address}")
-        try:
-            async for message in websocket:
-                await self.process_message(websocket,message)
-        except Exception as e:
-            logger.error(f"Error while handling client: {e}")
-        except websockets.exceptions.ConnectionClosed:
-            logger.info(f"Client disconnected: {client_address}")
-
-    async def process_message(self,websocket,message):
-        try:
-            data = json.loads(message)
-            command = data.get('command')
-            
-            self.db.log_command(
-                "response_pybullet_server", 
-                command, 
-                json.dumps(data), 
-                True
-            )
-            response=None
-            
-            if command == 'move_joint':
-                joint = data.get('joint')
-                direction = data.get('direction')
-                step = data.get('step', 0.1)
-                success,log_msg = self.robot.move_joint(joint,direction,step)
-
-                response={
-                    'type': 'command_response',
-                    'command':'move_joint',
-                    'success': success,
-                    'message': log_msg,
-                    'timestamp': time.time()
-                }
-
-            elif command == 'reset_positions':
-                self.robot.reset_positions()
-                response={
-                    'type': 'command_response',
-                    'command':'reset_positions',
-                    'success': True,
-                    'message': 'Positions have been reset',
-                    'timestamp': time.time()
-                }
-            
-            elif command == 'start_automatic_mode':
-                points = data.get('points')
-                orientations = data.get('orientations', None)
-                loop = data.get('loop_programming', False)
-                success,log_msg = self.robot.start_automatic_mode(points, orientations, loop)
-                response={
-                    'type': 'command_response',
-                    'command':'start_automatic',
-                    'success': success,
-                    'message': log_msg,
-                    'point_count': len(points),
-                    'timestamp': time.time()
-                }
-            
-            elif command == 'stop_automatic_mode':
-                self.robot.automatic_mode = False
-                success,log_msg = self.robot.stop_automatic_mode()
-                response={
-                    'type': 'command_response',
-                    'command':'stop_automatic',
-                    'success': success,
-                    'message': log_msg,
-                    'timestamp': time.time()
-                }
-                
-            elif command == 'set_adaptive_mode':
-                self.adaptive_mode = data.get('enabled', False)
-                self.robot.set_adaptive_mode(self.adaptive_mode, 'reduced' if self.adaptive_mode else 'full')
-                response={
-                    'type': 'command_response',
-                    'command':'set_adaptive_mode',
-                    'success': True,
-                    'message': 'Adaptive mode has been set',
-                    'adaptive_mode': self.adaptive_mode,
-                    'timestamp': time.time()
-                }
-                
-                logger.info(f"Adaptive mode: {self.adaptive_mode}, Speed mode: {self.speed_mode}")
-                
-                
-            else:
-                response={
-                    'type': 'error',
-                    'message': 'Unknown command',
-                    'timestamp': time.time()
-                }
-            
-            await websocket.send(json.dumps(response))
-                
-            
-            logger.info(f"Sedding response: {response}")
-            self.db.log_command(
-                "send_pybullet_server",
-                response.get('command'), 
-                json.dumps(response), 
-                True
-            )
-            
-        except json.JSONDecodeError:
-            await websocket.send(json.dumps({
-                'type': 'error',
-                'message': 'Invalid JSON format'
-            }))
-        except Exception as e:
-            await websocket.send(json.dumps({
-                'type': 'error',
-                'message': str(e)
-            }))
-
-    
-    async def start_server(self):
-        async with websockets.serve(self.handle_client, self.host, self.port):
-            logger.info(f"Server started on {self.host}:{self.port}")
-            
-            self.broadcast_task = asyncio.create_task(self.broadcast_positions())
-            await asyncio.Future()
-
-    def run(self):
-        asyncio.run(self.start_server())
-
-    def run_in_thread(self):
-        thread = Thread(target=self.run , daemon=True)
-        thread.start()
-        return thread
-
-    def stop(self):
-        """Остановка сервера"""
-        logger.info("Остановка сервера PyBullet...")
-        self.running = False
-        self.db.close()
-        if self.broadcast_task and not self.broadcast_task.done():
-            self.broadcast_task.cancel()
-        
-        if hasattr(self, 'robot') and self.robot:
-            self.robot.disconnect()
-    
-if __name__ == "__main__":
-    server = PybulletServer()
-    
-    try:
-    # Запускаем сервер в отдельном потоке
-        server_thread = server.run_in_thread()
-    
-        # Основной поток ждет завершения
-        while True:
-            time.sleep(1)
-        
-    except KeyboardInterrupt:
-        logger.info("Получен сигнал KeyboardInterrupt")
-        server.stop()
-
-time_controller:
+time_controller.py:
 # time_controller.py
 """
 Глобальный контроллер времени для всего проекта.
@@ -2439,7 +1614,236 @@ def today() -> dt.date:
     """Использовать вместо datetime.today()"""
     return time_controller.now().date()
 
-time_master:
+server_pybullet.py:
+import asyncio
+import websockets
+import json
+import time
+from threading import Thread
+import logging
+
+from main_simulation import KukaRobot
+from database import Database
+from time_controller import now
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+class PybulletServer:
+    def __init__(self, host="localhost", port=8765):
+        self.host = host
+        self.port = port
+        self.robot = KukaRobot(gui=True)
+        self.robot.connect()
+        self.db = Database()
+        self.adaptive_mode = False
+        self.clients = set()
+
+    async def register(self,websocket):
+        self.clients.add(websocket)
+        print(f"New client: {websocket.remote_address}")
+    
+    async def unregister(self,websocket):
+        self.clients.remove(websocket)
+        print(f"Client disconnected: {websocket.remote_address}")
+
+    
+    async def broadcast_positions(self):
+        """Передает текущие позиции суставов"""
+        while True:
+            try:
+                positions = self.robot.get_joint_positions()
+                message = {
+                    'type': 'positions',
+                    'JointPositions': positions.get('JointPositions'),
+                    'FramePositions': positions.get('FramePositions'),
+                    'End_effector_Orientation': positions.get('End_effector_Orientation'),
+                    'timestamp': time.time(),
+                    'virtual_time': now().isoformat(),
+                    'adaptive_mode': self.adaptive_mode,
+                    'speed_factor': positions.get('velosity')
+                }
+                
+
+                self.db.save_telemetry(
+                    positions=f'joint_positions:{positions.get('JointPositions')}, frame_positions:{positions.get("FramePositions")}, end_effector_orientation:{positions.get("End_effector_Orientation")}',
+                    velocity=positions.get('velosity'),
+                    adaptive_mode=self.adaptive_mode
+                )
+                try:
+                    await asyncio.gather(
+                        *[asyncio.create_task(client.send(json.dumps(message))) for client in self.clients]
+                    )
+                    
+                except Exception as e:
+                    logger.error(f"Error while broadcasting positions: {e}")
+                    
+                await asyncio.sleep(0.1)
+            except Exception as e:
+                logger.error(f"Error while broadcasting positions: {e}")
+                break
+
+    async def handle_client(self,websocket):
+        await self.register(websocket)
+        client_address = websocket.remote_address
+        logger.info(f"Client connected: {client_address}")
+        try:
+            async for message in websocket:
+                await self.process_message(websocket,message)
+        except Exception as e:
+            logger.error(f"Error while handling client: {e}")
+        except websockets.exceptions.ConnectionClosed:
+            logger.info(f"Client disconnected: {client_address}")
+
+    async def process_message(self,websocket,message):
+        try:
+            data = json.loads(message)
+            command = data.get('command')
+            
+            self.db.log_command(
+                "response_pybullet_server", 
+                command, 
+                json.dumps(data), 
+                True
+            )
+            response=None
+            
+            if command == 'move_joint':
+                joint = data.get('joint')
+                direction = data.get('direction')
+                step = data.get('step', 0.1)
+                success,log_msg = self.robot.move_joint(joint,direction,step)
+
+                response={
+                    'type': 'command_response',
+                    'command':'move_joint',
+                    'success': success,
+                    'message': log_msg,
+                    'timestamp': now().strftime("%d %H:%M:%S")
+                }
+
+            elif command == 'reset_positions':
+                self.robot.reset_positions()
+                response={
+                    'type': 'command_response',
+                    'command':'reset_positions',
+                    'success': True,
+                    'message': 'Positions have been reset',
+                    'timestamp': now().strftime("%d %H:%M:%S")
+                }
+            
+            elif command == 'start_automatic_mode':
+                points = data.get('points')
+                orientations = data.get('orientations', None)
+                loop = data.get('loop_programming', False)
+                success,log_msg = self.robot.start_automatic_mode(points, orientations, loop)
+                response={
+                    'type': 'command_response',
+                    'command':'start_automatic',
+                    'success': success,
+                    'message': log_msg,
+                    'point_count': len(points),
+                    'timestamp': now().strftime("%d %H:%M:%S")
+                }
+            
+            elif command == 'stop_automatic_mode':
+                self.robot.automatic_mode = False
+                success,log_msg = self.robot.stop_automatic_mode()
+                response={
+                    'type': 'command_response',
+                    'command':'stop_automatic',
+                    'success': success,
+                    'message': log_msg,
+                    'timestamp': now().strftime("%d %H:%M:%S")
+                }
+                
+            elif command == 'set_adaptive_mode':
+                self.adaptive_mode = data.get('enabled', False)
+                self.robot.set_adaptive_mode(self.adaptive_mode, 'reduced' if self.adaptive_mode else 'full')
+                response={
+                    'type': 'command_response',
+                    'command':'set_adaptive_mode',
+                    'success': True,
+                    'message': 'Adaptive mode has been set',
+                    'adaptive_mode': self.adaptive_mode,
+                    'timestamp': now().strftime("%d %H:%M:%S")
+                }
+                
+                logger.info(f"Adaptive mode: {self.adaptive_mode}, Speed mode: {self.speed_mode}")
+                
+                
+            else:
+                response={
+                    'type': 'error',
+                    'message': 'Unknown command',
+                    'timestamp': now().strftime("%d %H:%M:%S")
+                }
+            
+            await websocket.send(json.dumps(response))
+                
+            
+            logger.info(f"Sedding response: {response}")
+            self.db.log_command(
+                "send_pybullet_server",
+                response.get('command'), 
+                json.dumps(response), 
+                True
+            )
+            
+        except json.JSONDecodeError:
+            await websocket.send(json.dumps({
+                'type': 'error',
+                'message': 'Invalid JSON format'
+            }))
+        except Exception as e:
+            await websocket.send(json.dumps({
+                'type': 'error',
+                'message': str(e)
+            }))
+
+    
+    async def start_server(self):
+        async with websockets.serve(self.handle_client, self.host, self.port):
+            logger.info(f"Server started on {self.host}:{self.port}")
+            
+            self.broadcast_task = asyncio.create_task(self.broadcast_positions())
+            await asyncio.Future()
+
+    def run(self):
+        asyncio.run(self.start_server())
+
+    def run_in_thread(self):
+        thread = Thread(target=self.run , daemon=True)
+        thread.start()
+        return thread
+
+    def stop(self):
+        """Остановка сервера"""
+        logger.info("Остановка сервера PyBullet...")
+        self.running = False
+        self.db.close()
+        if self.broadcast_task and not self.broadcast_task.done():
+            self.broadcast_task.cancel()
+        
+        if hasattr(self, 'robot') and self.robot:
+            self.robot.disconnect()
+    
+if __name__ == "__main__":
+    server = PybulletServer()
+    
+    try:
+    # Запускаем сервер в отдельном потоке
+        server_thread = server.run_in_thread()
+    
+        # Основной поток ждет завершения
+        while True:
+            time.sleep(1)
+        
+    except KeyboardInterrupt:
+        logger.info("Получен сигнал KeyboardInterrupt")
+        server.stop()
+
+time_master.py:
 # time_master.py
 """
 Отдельный скрипт для управления временем во всём проекте.
@@ -2587,3 +1991,2992 @@ def main():
 if __name__ == '__main__':
     main()
 
+client_App_ml:
+import websockets
+import asyncio
+import json
+import logging
+
+from typing import Optional,Dict,Any, List
+import threading
+from threading import Thread
+from PySide6.QtCore import Signal, QObject
+from datetime import timedelta
+
+from time_controller import now 
+from database import Database
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+class MLClient(QObject):
+    connected = Signal()
+    disconnected = Signal()
+    predictions_received = Signal(dict)
+    error_occurred = Signal(str)
+
+    def __init__(self, uri: str = "ws://localhost:8766", prediction_interval: float = 300.0):
+        super().__init__()
+        self.uri = uri
+        self.websocket: Optional[websockets.WebSocketClientProtocol] = None
+        self.running = False
+        self.db = Database()
+        self.loop: Optional[asyncio.AbstractEventLoop] = None
+        self.prediction_interval = prediction_interval
+        self.last_prediction: Optional[Dict[str, Any]] = None
+
+        self._reconnect_attempts = -1 # -1 - бесконечно
+        self._reconnect_delay = 1 # начальная задержка
+        self._max_reconnect_delay = 60 # максимальная задержка
+        self._reconnect_task: Optional[asyncio.Task]  = None 
+        self._monitor_task: Optional[asyncio.Task] = None
+
+    
+    async def _monitor_predictions(self):
+        while self.websocket and self.running:
+            try:
+                #await self.get_prediction_async(future_minutes=20) запрос из главного приложения
+                await self.wait_virtual(self.prediction_interval)
+            except Exception as e:
+                logger.error(f"Error while monitoring predictions: {e}")
+                self.error_occurred.emit(str(e))
+                raise
+    
+    async def get_prediction_async(self, future_minutes: int=0) -> Dict[str, Any]:
+        if not self.websocket or not self.running:
+            raise ConnectionError("Not connected to server")
+        try:
+            if future_minutes >0:
+                target_time = now() + timedelta(minutes=future_minutes)
+            else:
+                target_time = now()
+
+            message = {
+                "command": "predict",
+                "timestamp": target_time.isoformat()
+                }
+            await self.websocket.send(json.dumps(message))
+            response = await self.websocket.recv()
+            result  = json.loads(response)
+            logger.info(f"Received prediction: {result}")
+
+            if result.get('type') == 'prediction':
+                self.last_prediction = result
+
+                features = {
+                    'hour': target_time.hour,
+                    'day_of_week': target_time.weekday()
+                }
+
+                self.db.log_ml_prediction(
+                                    features=features,
+                                    prediction=result.get('prediction'),
+                                    coffidence=result.get('confidence'),
+                                    threshold_used=result.get('threshold_used', 0.65),
+                                    adaptation_triggered=result.get('requires_adaptation',False)
+                                    )
+                
+                self.predictions_received.emit(result)
+            return result
+        except Exception as e:
+            logger.error(f"Error while getting prediction: {e}")
+            raise
+
+    async def should_adapt_interface(self):
+        """Определяет, нужно ли адаптировать интерфейс"""
+        if not self.last_prediction:
+            await self.get_prediction_async()
+
+        return self.last_prediction.get('requires_adaptation', False)
+    
+    async def get_adaptation_level(self):
+        """Возвращает уровень адаптации (0.0-1.0)"""
+        if not self.last_prediction:
+            await self.get_prediction_async()
+
+        confidence = self.last_prediction.get('confidence', 0.0)
+        threshold = self.last_prediction.get('threshold', 0.8)
+
+        if confidence <= threshold:
+            return 0.0
+        else:
+            return min(1.0, (confidence-threshold)/(1.0-threshold))
+    """
+    async def send_training_data_async(self, X:List, y:List):
+         #Отправляет данные для дообучения модели
+         if not self.websocket or not self.running:
+            raise ConnectionError("Not connected to server")
+         try:
+            message = {
+                "command": "retrain",
+                "X": X,
+                "y": y
+                }
+            await self.websocket.send(json.dumps(message))
+            response = await self.websocket.recv()
+            result  = json.loads(response)
+            return result
+        
+         except Exception as e:
+            logger.error(f"Error while sending training data: {e}")
+            raise
+            
+       def send_training_data(self, X: list, y: list):
+        #Отправляет данные для обучения из главного потока
+        if not self.running or not self.loop or self.loop.is_closed():
+            logger.warning("Cannot send training data: client not running")
+            return
+        
+        asyncio.run_coroutine_threadsafe(
+            self.send_training_data_async(X, y),
+            self.loop
+        )
+    """
+    
+    def start(self):
+        self.loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(self.loop)
+        self.running = True
+        try:
+            self._reconnect_task=self.loop.create_task(self._run_reconnecting())
+            self.loop.run_until_complete(self._reconnect_task)
+        except Exception as e:
+            logger.error(f"Error while starting client: {e}")
+        finally:
+            if self.loop and not self.loop.is_closed():
+                tasks= asyncio.all_tasks(self.loop)
+                for task in tasks:
+                    task.cancel()
+                self.loop.run_until_complete(asyncio.gather(*tasks,return_exceptions=True))
+                self.loop.close()
+                logger.info("Client event loop stopped")
+        
+    async def _run_reconnecting(self):
+        while self.running:
+            try:
+                await self._connect_with_retry()
+                await self._run_connected()
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                logger.error(f"Connection error in main loop: {e} ")
+                self.error_occurred.emit(str(e))
+                if self.running:
+                    await asyncio.sleep(self._reconnect_delay)
+            finally:
+                await self._close_connection()
+
+    async def _connect_with_retry(self):
+        attempt = 0
+        while self.running:
+            try:
+                self.websocket = await websockets.connect(self.uri)
+                logger.info(f"Connected to {self.uri}")
+                self.db.log_command("ml", "connect", f"uri: {self.uri}", True)
+                self.connected.emit()
+                return
+            except Exception as e:
+                logger.warning(f"Connection attempt {attempt+1} failed: {e}")
+                if self._reconnect_attempts != -1 and attempt >= self._reconnect_attempts:
+                    raise # Превышено количество попыток
+                delay =  min(self._reconnect_delay*(2**attempt), self._max_reconnect_delay)
+                attempt += 1
+                await asyncio.sleep(delay)
+
+    async def _run_connected(self):
+        self._monitor_task = self.loop.create_task(self._monitor_predictions())
+        try:
+            await self._monitor_task
+        except asyncio.CancelledError:
+            pass
+        except Exception as e:
+            logger.error(f"Monitor task failed: {e}")
+            raise
+    
+    async def _close_connection(self):
+        if self.websocket:
+            await self.websocket.close()
+            self.websocket = None
+            logger.info("Disconnected from server")
+            self.disconnected.emit()
+
+    def run_in_thread(self):
+        thread = threading.Thread(target=self.start, daemon=True)
+        thread.start()
+        return thread
+
+    def get_prediction(self, future_minutes: int):
+        """Запрашивает предсказание из главного потока"""
+        if not self.running or not self.loop or self.loop.is_closed():
+            logger.warning("Cannot get prediction: client not running")
+            return
+        
+        asyncio.run_coroutine_threadsafe(
+            self.get_prediction_async(future_minutes=future_minutes),
+            self.loop
+        )
+
+    async def wait_virtual(self, virtual_seconds: float):
+        """Ожидает virtual_seconds виртуального времени."""
+        start = now()
+        while True:
+            elapsed = (now() - start).total_seconds()
+            if elapsed > virtual_seconds:
+                break
+            await asyncio.sleep(0.1)
+
+
+    def stop(self):
+        self.running=False
+        if self.loop and self.loop.is_running():
+            asyncio.run_coroutine_threadsafe(self._shutdown(), self.loop)
+        
+    async def _shutdown(self):
+        if self._reconnect_task and not self._reconnect_task.done():
+            self._reconnect_task.cancel()
+            try:
+                await self._reconnect_task
+            except asyncio.CancelledError:
+                pass
+        if self._monitor_task and not self._monitor_task.done():
+            self._monitor_task.cancel()
+            try:
+                await self._monitor_task
+            except asyncio.CancelledError:
+                pass
+        await self._close_connection()
+    
+client_App_pybullet:
+import websockets
+import asyncio
+import json
+import logging
+import threading 
+from typing import Optional,Dict,Any
+from database import Database
+from PySide6.QtCore import Signal, QObject
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+class PyBulletClient(QObject):
+
+    connected = Signal()
+    disconnected = Signal()
+    positions_received = Signal(dict)
+    error_occurred = Signal(str)
+    command_response = Signal(str)
+
+    def __init__(self, uri: str ="ws://localhost:8765"):
+        super().__init__()
+        self.uri = uri
+        self.websocket: Optional[websockets.WebSocketClientProtocol] = None
+        self.running =False
+        self.loop: Optional[asyncio.AbstractEventLoop] = None
+        self.db = Database()
+
+        self._reconnect_attempts = -1 # -1 - бесконечно
+        self._reconnect_delay = 1 # начальная задержка
+        self._max_reconnect_delay = 60 # максимальная задержка
+        self._reconnect_task: Optional[asyncio.Task]  = None 
+        self._monitor_task: Optional[asyncio.Task] = None
+
+    async def connect_async(self):
+        try: 
+            self.websocket=await websockets.connect(self.uri)
+            self.running =True
+            logger.info(f"connect to {self.uri}")
+            
+            self.connected.emit()
+            
+            self.db.log_command("pybullet", "connect", f"uri: {self.uri}", True)
+
+            # Запускаем мониторинг позиций
+            asyncio.create_task(self._monitor_positions())
+
+        except Exception as e:
+            logger.error(f"Error while connecting: {e}")
+            self.db.log_command("pybullet", "connect", f"uri: {self.uri}", False)
+            raise
+    
+    async def _monitor_positions(self):
+        try:
+            async for message in self.websocket:
+                data =json.loads(message)
+                if data.get('type') == 'positions':
+                    positions = {
+                        'JointPositions':data.get('JointPositions',), 
+                        'FramePositions':data.get('FramePositions'),
+                        'End_effector_Orientation':data.get('End_effector_Orientation'),
+                        }
+                    self.positions_received.emit(positions)
+                else:
+                    response=data.get('message')
+                    self.command_response.emit(response)
+        except Exception as e:
+            logger.error(f"Error while monitoring positions: {e}")
+            self.error_occurred.emit(str(e))
+            raise
+            
+                
+                
+    async def send_command_async(self, command: str, **kwargs) -> dict[str, Any]:
+        # Отправляет команду на сервер симуляции
+        if not self.websocket or not self.running:
+            raise ConnectionError("Not connected to server")
+        try:
+            message = {"command": command, **kwargs}
+            await self.websocket.send(json.dumps( message))
+            logger.info(f"Sending command: {message}")
+
+            params_str = json.dumps(kwargs) if kwargs else {}
+
+            self.db.log_command("send_pybullet_client", command, params_str, True)
+
+        except Exception as e:
+            logger.error(f"Error while sending command: {e}")
+            self.db.log_command("pybullet_client", command, json.dumps(kwargs), False)
+            raise
+        
+    async def disconnect_async(self):
+        if self.websocket:
+            await self.websocket.close()
+            self.running=False
+            self.disconnected.emit()
+            logger.info("Disconnected from server")
+
+    def start(self):
+        self.loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(self.loop)
+        self.running=True
+        try:
+            self._reconnect_task=self.loop.create_task(self._run_reconnecting())
+            self.loop.run_until_complete(self._reconnect_task)
+        except Exception as e:
+            logger.error(f"Error while starting client: {e}")
+        finally:
+            # Очистка при завершении
+            if self.loop and not self.loop.is_closed():
+                if self.loop.is_running():
+                    self.loop.stop()
+                # Завершаем все задачи
+                tasks = asyncio.all_tasks(self.loop)
+                if tasks:
+                    for task in tasks:
+                        if not task.done():
+                            task.cancel()
+                    # Даем задачам время на завершение
+                    self.loop.run_until_complete(
+                        asyncio.gather(*tasks, return_exceptions=True)
+                    )
+                self.loop.close()
+            self.loop = None
+            logger.info("Client event loop stopped")
+
+    async def _run_reconnecting(self):
+        while self.running:
+            try:
+                await self._connect_with_retry()
+                await self._run_connected()
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                logger.error(f"Connection error in main loop: {e} ")
+                self.error_occurred.emit(str(e))
+                if self.running:
+                    await asyncio.sleep(self._reconnect_delay)
+            finally:
+                await self._close_connection()
+
+    async def _connect_with_retry(self):
+        """Пытается подключиться с экспоненциальной задержкой"""
+        attempt = 0
+        while self.running:
+            try:
+                self.websocket = await websockets.connect(self.uri)
+                logger.info(f"Connected to {self.uri}")
+                self.db.log_command("pybullet", "connect", f"uri: {self.uri}", True)
+                self.connected.emit()
+                return
+            except Exception as e:
+                logger.warning(f"Connection attempt {attempt+1} failed: {e}")
+                if self._reconnect_attempts != -1 and attempt >= self._reconnect_attempts:
+                    raise # Превышено количество попыток
+                delay =  min(self._reconnect_delay*(2**attempt), self._max_reconnect_delay)
+                attempt += 1
+                await asyncio.sleep(delay)
+
+    async def _run_connected(self):
+        """Запускаем мониторинг и ждет его завершения"""
+        self._monitor_task = asyncio.create_task(self._monitor_positions())
+        try:
+            await self._monitor_task
+        except asyncio.CancelledError:
+            #Штатная остановка 
+            pass
+        except Exception as e:
+            logger.error(f"Monitor task failed: {e}")
+            raise
+
+    async def _close_connection(self):
+        if self.websocket:
+            await self.websocket.close()
+            self.websocket = None
+            self.disconnected.emit()
+            logger.info("Disconnected from server")
+
+
+    def run_in_thread(self):
+        thread = threading.Thread(target=self.start, daemon=True)
+        thread.start()
+        return thread
+    
+    def send_command(self, command: str, **kwargs):
+        """Отправляет команду из главного потока"""
+        if not self.running or not self.loop or self.loop.is_closed():
+            logger.warning("Cannot send command: client not running")
+            return
+        
+        # Используем thread-safe вызов
+        asyncio.run_coroutine_threadsafe(
+            self.send_command_async(command, **kwargs),
+            self.loop
+        )
+    
+    def stop(self):
+        self.running=False
+        if self.loop and self.loop.is_running():
+            asyncio.run_coroutine_threadsafe(self._shutdown(), self.loop)
+
+    async def _shutdown(self):
+        """Корутина для корректной остановки клиента"""
+        # Отменяем задачу переподключения
+        if self._reconnect_task and not self._reconnect_task.done():
+            self._reconnect_task.cancel()
+            try:
+                await self._reconnect_task
+            except asyncio.CancelledError:
+                pass
+
+        #Отменяем мониторинг
+        if self._monitor_task and not self._monitor_task.done():
+            self._monitor_task.cancel()
+            try:
+                await self._monitor_task
+            except asyncio.CancelledError:
+                pass
+
+        # Закрываем соединение
+        await self._close_connection()
+
+    
+adaptation.py:
+
+class AdaptationManager:
+    def __init__(self):
+        self.styles = {
+            'normal': self._get_normal_style(),
+            'adaptive': self._get_adaptive_style()
+        }
+
+        # Имена второстепенных элементов, которые скрываются в адаптивном режиме
+        self.non_essential_buttons = [
+                'pushButton_22', 'pushButton_23', 'pushButton_24'
+            ]
+        
+        # Основные кнопки управления движением (должны быть крупнее в адаптивном режиме)
+        self.main_control_buttons = [
+            'XForwardButton', 'XBackwardButton',
+            'YForwardButton', 'YBackwardButton',
+            'ZForwardButton', 'ZBackwardButton',
+            'AForwardButton', 'ABackwardButton',
+            'BForwardButton', 'BBackwardButton',
+            'CForwardButton', 'CBackwardButton'
+        ]
+
+         # Важные функциональные кнопки (Home, SavePoint, ClearProgram)
+        self.functional_buttons = [
+            'HomeButton', 'SavePointButton', 'ClearProgramButtons'
+        ]
+
+    def _get_normal_style(self):
+        """
+        Нормальный режим (стандартная работа оператора).
+        Цветовая гамма: нейтральные серые тона, синий акцент.
+        Элементы среднего размера, хорошая читаемость, минимальная нагрузка на зрение.
+        Соответствует рекомендациям по эргономике: равномерное распределение контраста,
+        отсутствие резких переходов, единообразие форм.
+        """
+        return """
+            /* ========== ГЛАВНОЕ ОКНО ========== */
+            QMainWindow {
+                background-color: #f0f0f0;
+            }
+
+            /* ========== КНОПКИ ========== */
+            /* Базовый стиль для всех QPushButton */
+            QPushButton {
+                background-color: #2c3e50;
+                color: white;
+                border: none;
+                padding: 6px 10px;
+                border-radius: 0px;
+                font-size: 11px;
+                font-weight: normal;
+            }
+            QPushButton:hover {
+                background-color: #34495e;
+            }
+            QPushButton:pressed {
+                background-color: #1e2b38;
+            }
+
+            /* Кнопки управления движением (основные) */
+            #XForward, #XBackward, #YForward, #YBackward,
+            #ZForward, #ZBackward, #AForward, #ABackward,
+            #BForward, #BBackward, #CForward, #CBackward {
+                min-width: 50px;
+                min-height: 30px;
+            }
+
+            /* Функциональные кнопки (Home, SavePoint, ClearProgram) */
+            #HomeButton, #SavePointButton, #ClearProgramButtons {
+                min-width: 70px;
+                min-height: 30px;
+            }
+
+            /* Кнопки переключения страниц (верхняя панель) */
+            #ControlPageButton, #SurveyPageButton,
+            #pushButton_5, #pushButton_6, #pushButton_7, #pushButton_8 {
+                background-color: #3f51b5;  /* выделены другим цветом */
+            }
+            #ControlPageButton:hover, #SurveyPageButton:hover,
+            #pushButton_5:hover, #pushButton_6:hover,
+            #pushButton_7:hover, #pushButton_8:hover {
+                background-color: #5c6bc0;
+            }
+
+            /* ========== ЧЕКБОКС ========== */
+            #AutomaticModeButton {
+                color: #37474f;
+                spacing: 4px;
+            }
+            #AutomaticModeButton::indicator {
+                width: 14px;
+                height: 14px;
+            }
+
+            /* ========== ГРУППЫ ========== */
+            QGroupBox {
+                border: 0px solid #b0bec5;
+                border-radius: 4px;
+                margin-top: 6px;
+                font-weight: normal;
+                color: #37474f;
+            }
+            QGroupBox::title {
+                subcontrol-origin: margin;
+                left: 8px;
+                padding: 0 4px;
+                background-color: #f0f0f0;
+            }
+
+            /* ========== ТЕКСТОВЫЕ ПОЛЯ ========== */
+            QTextEdit, QPlainTextEdit {
+                background-color: white;
+                border: 1px solid #b0bec5;
+                border-radius: 2px;
+                font-size: 11px;
+            }
+
+            /* ========== НАДПИСИ (LABEL) ========== */
+            QLabel {
+                color: #000000;
+                font-size: 12px;
+            }
+            #TimeLabel, #StatusPanel,
+            #Label_adaptive_mode, #Label_ML_status, #Label_robot_status {
+                font-weight: bold;
+            }
+            #label_moving, #label_6, #label_7 {
+                font-size: 12px;
+            }
+
+            /* ========== РАДИО-КНОПКИ ========== */
+            QRadioButton {
+                color: #000000;
+                font-size: 13px;
+            }
+        """
+
+    def _get_adaptive_style(self):
+        """
+        Адаптивный режим (для уставшего оператора).
+        Повышенная контрастность, крупные элементы управления, тёплая цветовая гамма
+        для поддержания внимания и снижения когнитивной нагрузки.
+        Второстепенные элементы скрыты, основные кнопки увеличены.
+        """
+        return """
+            /* ========== ГЛАВНОЕ ОКНО ========== */
+            QMainWindow {
+                background-color: #263238;
+            }
+
+            /* ========== КНОПКИ ========== */
+            QPushButton {
+                background-color: #f39c12;
+                color: black;
+                border: 1px solid #e67e22;
+                padding: 8px 12px;
+                border-radius: 4px;
+                font-size: 12px;
+                font-weight: bold;
+            }
+            QPushButton:hover {
+                background-color: #e67e22;
+            }
+            QPushButton:pressed {
+                background-color: #d35400;
+            }
+
+            /* Кнопки управления движением (чуть крупнее) */
+            #XForward, #XBackward, #YForward, #YBackward,
+            #ZForward, #ZBackward, #AForward, #ABackward,
+            #BForward, #BBackward, #CForward, #CBackward {
+                min-width: 60px;
+                min-height: 36px;
+            }
+
+            /* Функциональные кнопки */
+            #HomeButton, #SavePointButton, #ClearProgramButtons {
+                min-width: 80px;
+                min-height: 36px;
+            }
+
+            /* Кнопки переключения страниц */
+            #ControlPageButton, #SurveyPageButton,
+            #pushButton_5, #pushButton_6, #pushButton_7, #pushButton_8 {
+                background-color: #e67e22;
+                border-color: #d35400;
+            }
+            #ControlPageButton:hover, #SurveyPageButton:hover,
+            #pushButton_5:hover, #pushButton_6:hover,
+            #pushButton_7:hover, #pushButton_8:hover {
+                background-color: #d35400;
+            }
+
+            /* ========== ЧЕКБОКС ========== */
+            #AutomaticModeButton {
+                color: #ecf0f1;
+                spacing: 5px;
+                font-size: 12px;
+            }
+            #AutomaticModeButton::indicator {
+                width: 16px;
+                height: 16px;
+            }
+
+            /* ========== ГРУППЫ ========== */
+            QGroupBox {
+                border: 0px solid #f39c12;
+                border-radius: 4px;
+                margin-top: 6px;
+                font-weight: normal;
+                color: #f39c12;
+            }
+            QGroupBox::title {
+                subcontrol-origin: margin;
+                left: 8px;
+                padding: 0 4px;
+                background-color: #263238;
+            }
+
+            /* ========== ТЕКСТОВЫЕ ПОЛЯ ========== */
+            QTextEdit, QPlainTextEdit {
+                background-color: #2c3e50;
+                color: #ecf0f1;
+                border: 1px solid #f39c12;
+                border-radius: 3px;
+                font-size: 12px;
+            }
+
+            /* ========== НАДПИСИ ========== */
+            QLabel {
+                color: #ecf0f1;
+                font-size: 12px;
+            }
+            #TimeLabel, #StatusPanel,
+            #Label_adaptive_mode, #Label_ML_status, #Label_robot_status {
+                font-weight: bold;
+            }
+            #label_moving, #label_6, #label_7 {
+                font-size: 13px;
+            }
+
+            /* ========== РАДИО-КНОПКИ ========== */
+            QRadioButton {
+                color: #ecf0f1;
+                font-size: 13px;
+            }
+        """
+
+    
+    def apply_normal_style(self, ui):
+        """Применение обычного стиля"""
+        ui.setStyleSheet(self.styles['normal'])
+        self._show_all_elements(ui)
+        self._set_button_size(ui, self.main_control_buttons, width=60, height=30)
+        self._set_button_size(ui, self.functional_buttons, width=70, height=30)
+
+    def apply_adaptive_style(self, ui):
+        """Применение упрощенного стиля"""
+        ui.setStyleSheet(self.styles['adaptive'])
+        self._hide_non_essential_elements(ui)
+        self._set_button_size(ui, self.main_control_buttons, width=100, height=50)
+        self._set_button_size(ui, self.functional_buttons, width=80, height=36)
+
+
+    def _hide_non_essential_elements(self,ui):
+        """Скрытие ненужных элементов"""
+        # Пример скрытия ненужных элементов
+        for btn_name in self.non_essential_buttons:
+            if hasattr(ui, btn_name):
+                getattr(ui, btn_name).hide()
+        
+    def _show_all_elements(self, ui):
+        """Показывает все элементы (возврат к нормальному режиму)."""
+        for btn_name in self.non_essential_buttons:
+            if hasattr(ui, btn_name):
+                getattr(ui, btn_name).show()
+
+
+    def _set_button_size(self, ui, button_names, width, height):
+        """Устанавливает минимальный размер для указанных кнопок."""
+        for name in button_names:
+            if hasattr(ui, name):
+                btn = getattr(ui, name)
+                btn.setMinimumSize(width, height)
+
+database.py:
+
+import sqlite3
+from datetime import timedelta
+import os
+from typing import List, Optional, Dict, Any
+import threading 
+import json
+import logging
+
+from time_controller import now
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+class Database:
+    def __init__(self, db_name="adaptive_robot.db"):
+        current_dir = os.path.dirname(os.path.abspath(__file__))
+        db_path = os.path.join(current_dir, db_name)
+        self.db = db_path
+        self.connection = sqlite3.connect(db_path, check_same_thread=False)
+        self.connection.row_factory = sqlite3.Row  # возвращает словари вместо кортежей 
+        self.create_tables()
+
+        # Таймер для управления частотой опросов
+        self.survey_timer = None
+        self.survey_interval = 30*60
+        self.survey_callback = None
+        self.survey_thread = None
+
+
+    def create_tables(self):
+        cursor = self.connection.cursor()
+
+        # Таблица для опросов
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS survey_response (
+            id integer PRIMARY KEY AUTOINCREMENT,
+            timestamp DATETIME,
+            fatigue_level integer CHECK(FATIGUE_LEVEL >= 0 AND FATIGUE_LEVEL <= 10),
+            concentration_level integer CHECK(FATIGUE_LEVEL >= 0 AND FATIGUE_LEVEL <= 10),
+            hour_of_day integer,
+            day_of_week integer
+            )
+        """)
+
+        # Таблица для телеметрии
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS robot_telemetry(
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                timestamp DATETIME not null,
+                positions TEXT,
+                velocity REAL,
+                adaptive_mode TEXT
+                )
+        """)
+
+        # Таблица для логов команд
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS command_log(
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                timestamp DATETIME not null,
+                source TEXT,
+                command TEXT,
+                parameters TEXT,
+                success BOOLEAN
+                )
+        """)
+
+        # Таблица для ML
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS ml_predictions(
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                timestamp DATETIME not null,
+                hour_of_day INTEGER,
+                day_of_week INTEGER,
+                features TEXT, 
+                prediction boolean, 
+                confidence REAL,
+                threshold_used REAL, 
+                adaptation_triggered boolean
+                )
+        """)
+
+        # JSON с признаками
+            # Предсказание (уставший/не уставший)
+            # Уверенность модели (0.0-1.0)
+            # Порог, который использовался
+            # Была ли запущена адаптация
+        self.connection.commit()
+
+    def start_survey_scheduler(self,callback):
+        """Запускает планировщик опросов в отдельном потоке"""
+        self.survey_callback = callback
+        def survey_worker():
+            while True:
+                try:
+                    # Ждем интервал
+                    threading.Event().wait(self.survey_interval)
+                    # Вызываем callback в главном потоке
+                    if self.survey_callback:
+                        # Нужно будет вызвать через QTimer или QMetaObject.invokeMethod
+                        # Пока просто логируем
+                        
+                        logger.info("Survey time! (Need to trigger in main thread)")
+                        
+                        # Обновляем интервал на основе количества опросов
+                        self._update_survey_interval()
+                
+                except Exception as e:
+                    logger.error(f"Error while monitoring survey: {e}")
+                    raise
+        
+        self.survey_thread = threading.Thread(target=survey_worker, daemon=True)
+        self.survey_thread.start()
+        logger.info(f"Survey scheduler started with interval {self.survey_interval}s")
+
+
+    def save_survey(self, fatigue_level: int, concentration_level: int):
+        cursor = self.connection.cursor()
+        current_time = now()
+
+        cursor.execute("""
+            INSERT INTO Survey_response (timestamp, fatigue_level, concentration_level, hour_of_day, day_of_week)
+            values(?,?,?,?,?)
+        """,
+            (current_time, fatigue_level, concentration_level,current_time.hour, current_time.weekday()))
+        self.connection.commit()
+       
+        self._update_survey_interval()
+
+        return cursor.lastrowid
+    
+    def _update_survey_interval(self):
+        """Обновляет интервал опросов на основе количества данных"""
+        cursor = self.connection.cursor()
+        cursor.execute("SELECT COUNT(*) FROM survey_response")
+        count = cursor.fetchone()[0]
+        if count < 1440: # первый месяц
+            self.survey_interval_minutes = 30 # 30 мин
+        elif count <= 2880: # второй месяц
+            self.survey_interval_minutes = 60 # 1 час
+        else: # после второго месяца
+            self.survey_interval_minutes = 120 # 2 часа
+
+
+    def save_telemetry(self, positions: str, velocity:float, adaptive_mode: bool=False):
+        #Сохраняет телеметрию, поддерживая максимум 50 записей
+        cursor = self.connection.cursor()
+
+        # Удаляем старые записи, если больше 50
+        cursor.execute("SELECT COUNT(*) FROM robot_telemetry")
+        count = cursor.fetchone()[0]
+        if count > 50:
+            cursor.execute("""DELETE FROM robot_telemetry 
+            WHERE id IN( 
+                SELECT id FROM robot_telemetry
+                ORDER BY timestamp ASC
+                LIMIT ?
+            ) 
+            """, (count - 49,))
+        positions_json=json.dumps(positions)
+        # Вставляем новую запись
+        cursor.execute("""
+            INSERT INTO robot_telemetry 
+            (timestamp, positions, velocity, adaptive_mode)
+            values(?,?,?,?)
+        """,
+            (now(), positions_json, velocity, adaptive_mode))
+        self.connection.commit()
+    
+    def log_command(self, source: str, command: str, parameters: str, success: bool = True):
+        # Логирует команды межды компонентами
+        cursor = self.connection.cursor()
+
+        cursor.execute("SELECT COUNT(*) FROM command_log")
+        count_log = cursor.fetchone()[0]
+        if count_log > 300:
+            cursor.execute("""DELETE FROM command_log 
+            WHERE id IN( 
+                SELECT id FROM command_log
+                ORDER BY timestamp ASC
+                LIMIT ?
+            ) 
+            """, (count_log - 299,))
+
+        # Если parameters - это dict, преобразуем в строку
+        if isinstance(parameters, dict):
+            parameters = json.dumps(parameters)
+        cursor.execute("""
+            INSERT INTO command_log (timestamp, source, command, parameters, success)
+            values(?,?,?,?,?)
+        """,
+            (now().strftime("%Y-%m-%d %H:%M:%S"), source, command, parameters, success))
+        self.connection.commit()
+
+    def get_training_data(self, limit: int= 1000):
+        cursor = self.connection.cursor()
+        cursor.execute("""
+            SELECT timestamp, hour_of_day, day_of_week, fatigue_level, concentration_level 
+            FROM Survey_response
+            ORDER BY timestamp DESC
+            LIMIT ?
+            """, (limit,))  
+        return cursor.fetchall()
+    
+    def get_survey_count(self):
+        cursor = self.connection.cursor()
+        cursor.execute("SELECT COUNT(*) FROM survey_response")
+        return cursor.fetchone()[0]
+    
+    def log_ml_prediction(self, features:dict, prediction:bool,
+                        coffidence:float, threshold_used:float,
+                        adaptation_triggered:bool):
+        """Логирует предсказание ML модели"""
+        cursor = self.connection.cursor()
+        features_json = json.dumps(features)
+        current_time = now()
+        cursor.execute("""
+            INSERT INTO ml_predictions (timestamp, hour_of_day, day_of_week, features, prediction, confidence, threshold_used, adaptation_triggered)
+            values(?,?,?,?,?,?,?,?)
+        """,
+            (current_time.strftime("%Y-%m-%d %H:%M:%S"), current_time.hour, current_time.weekday(), features_json, prediction, coffidence, threshold_used, adaptation_triggered))
+        self.connection.commit()
+
+    def stop_survey_scheduler(self):
+        """Останавливает планировщик опросов"""
+        if self.survey_thread and self.survey_thread.is_alive():
+            # Нет простого способа остановить, но поток daemon=True
+            # сам завершится при завершении программы
+            pass
+    
+    def close(self):
+        self.stop_survey_scheduler()
+        if self.connection:
+            self.connection.close()
+
+Gui_ui.py:
+# -*- coding: utf-8 -*-
+
+################################################################################
+## Form generated from reading UI file 'Gui.ui'
+##
+## Created by: Qt User Interface Compiler version 6.10.1
+##
+## WARNING! All changes made in this file will be lost when recompiling UI file!
+################################################################################
+
+from PySide6.QtCore import (QCoreApplication, QDate, QDateTime, QLocale,
+    QMetaObject, QObject, QPoint, QRect,
+    QSize, QTime, QUrl, Qt)
+from PySide6.QtGui import (QBrush, QColor, QConicalGradient, QCursor,
+    QFont, QFontDatabase, QGradient, QIcon,
+    QImage, QKeySequence, QLinearGradient, QPainter,
+    QPalette, QPixmap, QRadialGradient, QTransform)
+from PySide6.QtWidgets import (QApplication, QCheckBox, QGroupBox, QHBoxLayout,
+    QLabel, QMainWindow, QMenuBar, QPushButton,
+    QRadioButton, QSizePolicy, QStackedWidget, QStatusBar,
+    QTextEdit, QVBoxLayout, QWidget)
+
+class Ui_MainWindow(object):
+    def setupUi(self, MainWindow):
+        if not MainWindow.objectName():
+            MainWindow.setObjectName(u"MainWindow")
+        MainWindow.resize(875, 671)
+        self.centralwidget = QWidget(MainWindow)
+        self.centralwidget.setObjectName(u"centralwidget")
+        self.stackedWidget = QStackedWidget(self.centralwidget)
+        self.stackedWidget.setObjectName(u"stackedWidget")
+        self.stackedWidget.setGeometry(QRect(200, 80, 671, 551))
+        self.ControlPage = QWidget()
+        self.ControlPage.setObjectName(u"ControlPage")
+        self.MoveBox = QGroupBox(self.ControlPage)
+        self.MoveBox.setObjectName(u"MoveBox")
+        self.MoveBox.setGeometry(QRect(490, 10, 181, 471))
+        self.verticalLayoutWidget_2 = QWidget(self.MoveBox)
+        self.verticalLayoutWidget_2.setObjectName(u"verticalLayoutWidget_2")
+        self.verticalLayoutWidget_2.setGeometry(QRect(0, 0, 181, 471))
+        self.verticalLayout_6 = QVBoxLayout(self.verticalLayoutWidget_2)
+        self.verticalLayout_6.setObjectName(u"verticalLayout_6")
+        self.verticalLayout_6.setContentsMargins(0, 0, 0, 0)
+        self.horizontalLayout_5 = QHBoxLayout()
+        self.horizontalLayout_5.setObjectName(u"horizontalLayout_5")
+        self.XForward = QPushButton(self.verticalLayoutWidget_2)
+        self.XForward.setObjectName(u"XForward")
+        sizePolicy = QSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
+        sizePolicy.setHorizontalStretch(0)
+        sizePolicy.setVerticalStretch(0)
+        sizePolicy.setHeightForWidth(self.XForward.sizePolicy().hasHeightForWidth())
+        self.XForward.setSizePolicy(sizePolicy)
+        self.XForward.setMaximumSize(QSize(16777215, 50))
+
+        self.horizontalLayout_5.addWidget(self.XForward)
+
+        self.XBackward = QPushButton(self.verticalLayoutWidget_2)
+        self.XBackward.setObjectName(u"XBackward")
+        sizePolicy.setHeightForWidth(self.XBackward.sizePolicy().hasHeightForWidth())
+        self.XBackward.setSizePolicy(sizePolicy)
+        self.XBackward.setMaximumSize(QSize(16777215, 50))
+
+        self.horizontalLayout_5.addWidget(self.XBackward)
+
+
+        self.verticalLayout_6.addLayout(self.horizontalLayout_5)
+
+        self.horizontalLayout_8 = QHBoxLayout()
+        self.horizontalLayout_8.setObjectName(u"horizontalLayout_8")
+        self.YForward = QPushButton(self.verticalLayoutWidget_2)
+        self.YForward.setObjectName(u"YForward")
+        self.YForward.setEnabled(True)
+        sizePolicy.setHeightForWidth(self.YForward.sizePolicy().hasHeightForWidth())
+        self.YForward.setSizePolicy(sizePolicy)
+        self.YForward.setMaximumSize(QSize(16777215, 50))
+
+        self.horizontalLayout_8.addWidget(self.YForward)
+
+        self.YBackward = QPushButton(self.verticalLayoutWidget_2)
+        self.YBackward.setObjectName(u"YBackward")
+        self.YBackward.setEnabled(True)
+        sizePolicy.setHeightForWidth(self.YBackward.sizePolicy().hasHeightForWidth())
+        self.YBackward.setSizePolicy(sizePolicy)
+        self.YBackward.setMaximumSize(QSize(16777215, 50))
+
+        self.horizontalLayout_8.addWidget(self.YBackward)
+
+
+        self.verticalLayout_6.addLayout(self.horizontalLayout_8)
+
+        self.horizontalLayout_9 = QHBoxLayout()
+        self.horizontalLayout_9.setObjectName(u"horizontalLayout_9")
+        self.ZForward = QPushButton(self.verticalLayoutWidget_2)
+        self.ZForward.setObjectName(u"ZForward")
+        self.ZForward.setEnabled(True)
+        sizePolicy.setHeightForWidth(self.ZForward.sizePolicy().hasHeightForWidth())
+        self.ZForward.setSizePolicy(sizePolicy)
+        self.ZForward.setMaximumSize(QSize(16777215, 50))
+
+        self.horizontalLayout_9.addWidget(self.ZForward)
+
+        self.ZBackward = QPushButton(self.verticalLayoutWidget_2)
+        self.ZBackward.setObjectName(u"ZBackward")
+        self.ZBackward.setEnabled(True)
+        sizePolicy.setHeightForWidth(self.ZBackward.sizePolicy().hasHeightForWidth())
+        self.ZBackward.setSizePolicy(sizePolicy)
+        self.ZBackward.setMaximumSize(QSize(16777215, 50))
+
+        self.horizontalLayout_9.addWidget(self.ZBackward)
+
+
+        self.verticalLayout_6.addLayout(self.horizontalLayout_9)
+
+        self.horizontalLayout_10 = QHBoxLayout()
+        self.horizontalLayout_10.setObjectName(u"horizontalLayout_10")
+        self.AForward = QPushButton(self.verticalLayoutWidget_2)
+        self.AForward.setObjectName(u"AForward")
+        self.AForward.setEnabled(True)
+        sizePolicy.setHeightForWidth(self.AForward.sizePolicy().hasHeightForWidth())
+        self.AForward.setSizePolicy(sizePolicy)
+        self.AForward.setMaximumSize(QSize(16777215, 50))
+
+        self.horizontalLayout_10.addWidget(self.AForward)
+
+        self.ABackward = QPushButton(self.verticalLayoutWidget_2)
+        self.ABackward.setObjectName(u"ABackward")
+        self.ABackward.setEnabled(True)
+        sizePolicy.setHeightForWidth(self.ABackward.sizePolicy().hasHeightForWidth())
+        self.ABackward.setSizePolicy(sizePolicy)
+        self.ABackward.setMaximumSize(QSize(16777215, 50))
+
+        self.horizontalLayout_10.addWidget(self.ABackward)
+
+
+        self.verticalLayout_6.addLayout(self.horizontalLayout_10)
+
+        self.horizontalLayout_11 = QHBoxLayout()
+        self.horizontalLayout_11.setObjectName(u"horizontalLayout_11")
+        self.BForward = QPushButton(self.verticalLayoutWidget_2)
+        self.BForward.setObjectName(u"BForward")
+        self.BForward.setEnabled(True)
+        sizePolicy.setHeightForWidth(self.BForward.sizePolicy().hasHeightForWidth())
+        self.BForward.setSizePolicy(sizePolicy)
+        self.BForward.setMaximumSize(QSize(16777215, 50))
+
+        self.horizontalLayout_11.addWidget(self.BForward)
+
+        self.BBackward = QPushButton(self.verticalLayoutWidget_2)
+        self.BBackward.setObjectName(u"BBackward")
+        self.BBackward.setEnabled(True)
+        sizePolicy.setHeightForWidth(self.BBackward.sizePolicy().hasHeightForWidth())
+        self.BBackward.setSizePolicy(sizePolicy)
+        self.BBackward.setMaximumSize(QSize(16777215, 50))
+
+        self.horizontalLayout_11.addWidget(self.BBackward)
+
+
+        self.verticalLayout_6.addLayout(self.horizontalLayout_11)
+
+        self.horizontalLayout_12 = QHBoxLayout()
+        self.horizontalLayout_12.setObjectName(u"horizontalLayout_12")
+        self.CForward = QPushButton(self.verticalLayoutWidget_2)
+        self.CForward.setObjectName(u"CForward")
+        self.CForward.setEnabled(True)
+        sizePolicy.setHeightForWidth(self.CForward.sizePolicy().hasHeightForWidth())
+        self.CForward.setSizePolicy(sizePolicy)
+        self.CForward.setMaximumSize(QSize(16777215, 50))
+
+        self.horizontalLayout_12.addWidget(self.CForward)
+
+        self.CBackward = QPushButton(self.verticalLayoutWidget_2)
+        self.CBackward.setObjectName(u"CBackward")
+        self.CBackward.setEnabled(True)
+        sizePolicy.setHeightForWidth(self.CBackward.sizePolicy().hasHeightForWidth())
+        self.CBackward.setSizePolicy(sizePolicy)
+        self.CBackward.setMaximumSize(QSize(16777215, 50))
+
+        self.horizontalLayout_12.addWidget(self.CBackward)
+
+
+        self.verticalLayout_6.addLayout(self.horizontalLayout_12)
+
+        self.OutputCode = QGroupBox(self.ControlPage)
+        self.OutputCode.setObjectName(u"OutputCode")
+        self.OutputCode.setGeometry(QRect(0, 10, 491, 471))
+        self.verticalLayoutWidget_5 = QWidget(self.OutputCode)
+        self.verticalLayoutWidget_5.setObjectName(u"verticalLayoutWidget_5")
+        self.verticalLayoutWidget_5.setGeometry(QRect(10, 10, 471, 451))
+        self.verticalLayout_9 = QVBoxLayout(self.verticalLayoutWidget_5)
+        self.verticalLayout_9.setObjectName(u"verticalLayout_9")
+        self.verticalLayout_9.setContentsMargins(0, 0, 0, 0)
+        self.Code = QTextEdit(self.OutputCode)
+        self.Code.setObjectName(u"Code")
+        self.Code.setGeometry(QRect(0, 0, 491, 471))
+        self.Code.setReadOnly(True)
+        self.ParametrsButtons = QGroupBox(self.ControlPage)
+        self.ParametrsButtons.setObjectName(u"ParametrsButtons")
+        self.ParametrsButtons.setGeometry(QRect(0, 490, 491, 51))
+        self.horizontalLayoutWidget = QWidget(self.ParametrsButtons)
+        self.horizontalLayoutWidget.setObjectName(u"horizontalLayoutWidget")
+        self.horizontalLayoutWidget.setGeometry(QRect(0, 0, 491, 51))
+        self.horizontalLayout = QHBoxLayout(self.horizontalLayoutWidget)
+        self.horizontalLayout.setObjectName(u"horizontalLayout")
+        self.horizontalLayout.setContentsMargins(0, 0, 0, 0)
+        self.HomeButton = QPushButton(self.horizontalLayoutWidget)
+        self.HomeButton.setObjectName(u"HomeButton")
+        sizePolicy1 = QSizePolicy(QSizePolicy.Policy.Minimum, QSizePolicy.Policy.Minimum)
+        sizePolicy1.setHorizontalStretch(0)
+        sizePolicy1.setVerticalStretch(0)
+        sizePolicy1.setHeightForWidth(self.HomeButton.sizePolicy().hasHeightForWidth())
+        self.HomeButton.setSizePolicy(sizePolicy1)
+        self.HomeButton.setMaximumSize(QSize(16777215, 50))
+
+        self.horizontalLayout.addWidget(self.HomeButton)
+
+        self.SavePointButton = QPushButton(self.horizontalLayoutWidget)
+        self.SavePointButton.setObjectName(u"SavePointButton")
+        sizePolicy1.setHeightForWidth(self.SavePointButton.sizePolicy().hasHeightForWidth())
+        self.SavePointButton.setSizePolicy(sizePolicy1)
+        self.SavePointButton.setMaximumSize(QSize(16777215, 50))
+
+        self.horizontalLayout.addWidget(self.SavePointButton)
+
+        self.pushButton_23 = QPushButton(self.horizontalLayoutWidget)
+        self.pushButton_23.setObjectName(u"pushButton_23")
+        sizePolicy1.setHeightForWidth(self.pushButton_23.sizePolicy().hasHeightForWidth())
+        self.pushButton_23.setSizePolicy(sizePolicy1)
+        self.pushButton_23.setMaximumSize(QSize(16777215, 50))
+
+        self.horizontalLayout.addWidget(self.pushButton_23)
+
+        self.ClearProgramButtons = QPushButton(self.horizontalLayoutWidget)
+        self.ClearProgramButtons.setObjectName(u"ClearProgramButtons")
+        sizePolicy1.setHeightForWidth(self.ClearProgramButtons.sizePolicy().hasHeightForWidth())
+        self.ClearProgramButtons.setSizePolicy(sizePolicy1)
+        self.ClearProgramButtons.setMaximumSize(QSize(16777215, 50))
+
+        self.horizontalLayout.addWidget(self.ClearProgramButtons)
+
+        self.stackedWidget.addWidget(self.ControlPage)
+        self.SurvayPage = QWidget()
+        self.SurvayPage.setObjectName(u"SurvayPage")
+        self.StatusSurvey = QGroupBox(self.SurvayPage)
+        self.StatusSurvey.setObjectName(u"StatusSurvey")
+        self.StatusSurvey.setGeometry(QRect(10, 10, 171, 81))
+        self.verticalLayoutWidget_3 = QWidget(self.StatusSurvey)
+        self.verticalLayoutWidget_3.setObjectName(u"verticalLayoutWidget_3")
+        self.verticalLayoutWidget_3.setGeometry(QRect(0, 0, 171, 80))
+        self.verticalLayout_7 = QVBoxLayout(self.verticalLayoutWidget_3)
+        self.verticalLayout_7.setObjectName(u"verticalLayout_7")
+        self.verticalLayout_7.setContentsMargins(0, 0, 0, 0)
+        self.label_8 = QLabel(self.verticalLayoutWidget_3)
+        self.label_8.setObjectName(u"label_8")
+
+        self.verticalLayout_7.addWidget(self.label_8)
+
+        self.last_survey = QLabel(self.verticalLayoutWidget_3)
+        self.last_survey.setObjectName(u"last_survey")
+
+        self.verticalLayout_7.addWidget(self.last_survey)
+
+        self.interval_survey = QLabel(self.verticalLayoutWidget_3)
+        self.interval_survey.setObjectName(u"interval_survey")
+
+        self.verticalLayout_7.addWidget(self.interval_survey)
+
+        self.Question_1 = QGroupBox(self.SurvayPage)
+        self.Question_1.setObjectName(u"Question_1")
+        self.Question_1.setGeometry(QRect(10, 120, 651, 81))
+        self.horizontalLayoutWidget_7 = QWidget(self.Question_1)
+        self.horizontalLayoutWidget_7.setObjectName(u"horizontalLayoutWidget_7")
+        self.horizontalLayoutWidget_7.setGeometry(QRect(0, 0, 651, 81))
+        self.horizontalLayout_13 = QHBoxLayout(self.horizontalLayoutWidget_7)
+        self.horizontalLayout_13.setSpacing(1)
+        self.horizontalLayout_13.setObjectName(u"horizontalLayout_13")
+        self.horizontalLayout_13.setContentsMargins(0, 0, 0, 0)
+        self.label_11 = QLabel(self.horizontalLayoutWidget_7)
+        self.label_11.setObjectName(u"label_11")
+        self.label_11.setMaximumSize(QSize(75, 16777215))
+
+        self.horizontalLayout_13.addWidget(self.label_11)
+
+        self.radioButton = QRadioButton(self.horizontalLayoutWidget_7)
+        self.radioButton.setObjectName(u"radioButton")
+        self.radioButton.setMaximumSize(QSize(35, 16777215))
+
+        self.horizontalLayout_13.addWidget(self.radioButton)
+
+        self.radioButton_2 = QRadioButton(self.horizontalLayoutWidget_7)
+        self.radioButton_2.setObjectName(u"radioButton_2")
+        self.radioButton_2.setMaximumSize(QSize(35, 16777215))
+
+        self.horizontalLayout_13.addWidget(self.radioButton_2)
+
+        self.radioButton_3 = QRadioButton(self.horizontalLayoutWidget_7)
+        self.radioButton_3.setObjectName(u"radioButton_3")
+        self.radioButton_3.setMaximumSize(QSize(35, 16777215))
+
+        self.horizontalLayout_13.addWidget(self.radioButton_3)
+
+        self.radioButton_4 = QRadioButton(self.horizontalLayoutWidget_7)
+        self.radioButton_4.setObjectName(u"radioButton_4")
+        self.radioButton_4.setMaximumSize(QSize(35, 16777215))
+
+        self.horizontalLayout_13.addWidget(self.radioButton_4)
+
+        self.radioButton_5 = QRadioButton(self.horizontalLayoutWidget_7)
+        self.radioButton_5.setObjectName(u"radioButton_5")
+        self.radioButton_5.setMaximumSize(QSize(35, 16777215))
+
+        self.horizontalLayout_13.addWidget(self.radioButton_5)
+
+        self.radioButton_6 = QRadioButton(self.horizontalLayoutWidget_7)
+        self.radioButton_6.setObjectName(u"radioButton_6")
+        self.radioButton_6.setMaximumSize(QSize(35, 16777215))
+
+        self.horizontalLayout_13.addWidget(self.radioButton_6)
+
+        self.radioButton_8 = QRadioButton(self.horizontalLayoutWidget_7)
+        self.radioButton_8.setObjectName(u"radioButton_8")
+        self.radioButton_8.setMaximumSize(QSize(35, 16777215))
+
+        self.horizontalLayout_13.addWidget(self.radioButton_8)
+
+        self.radioButton_7 = QRadioButton(self.horizontalLayoutWidget_7)
+        self.radioButton_7.setObjectName(u"radioButton_7")
+        self.radioButton_7.setMaximumSize(QSize(35, 16777215))
+
+        self.horizontalLayout_13.addWidget(self.radioButton_7)
+
+        self.radioButton_9 = QRadioButton(self.horizontalLayoutWidget_7)
+        self.radioButton_9.setObjectName(u"radioButton_9")
+        self.radioButton_9.setMaximumSize(QSize(35, 16777215))
+
+        self.horizontalLayout_13.addWidget(self.radioButton_9)
+
+        self.radioButton_10 = QRadioButton(self.horizontalLayoutWidget_7)
+        self.radioButton_10.setObjectName(u"radioButton_10")
+        self.radioButton_10.setMaximumSize(QSize(35, 16777215))
+
+        self.horizontalLayout_13.addWidget(self.radioButton_10)
+
+        self.HistorySurvey = QGroupBox(self.SurvayPage)
+        self.HistorySurvey.setObjectName(u"HistorySurvey")
+        self.HistorySurvey.setGeometry(QRect(20, 410, 331, 131))
+        self.HistorySurvey.setFlat(False)
+        self.verticalLayoutWidget_4 = QWidget(self.HistorySurvey)
+        self.verticalLayoutWidget_4.setObjectName(u"verticalLayoutWidget_4")
+        self.verticalLayoutWidget_4.setGeometry(QRect(0, 20, 311, 111))
+        self.verticalLayout_8 = QVBoxLayout(self.verticalLayoutWidget_4)
+        self.verticalLayout_8.setObjectName(u"verticalLayout_8")
+        self.verticalLayout_8.setContentsMargins(0, 0, 0, 0)
+        self.history_answer = QTextEdit(self.verticalLayoutWidget_4)
+        self.history_answer.setObjectName(u"history_answer")
+
+        self.verticalLayout_8.addWidget(self.history_answer)
+
+        self.SentAnswer = QPushButton(self.SurvayPage)
+        self.SentAnswer.setObjectName(u"SentAnswer")
+        self.SentAnswer.setGeometry(QRect(530, 480, 111, 41))
+        self.Question_2 = QGroupBox(self.SurvayPage)
+        self.Question_2.setObjectName(u"Question_2")
+        self.Question_2.setGeometry(QRect(10, 210, 651, 81))
+        self.horizontalLayoutWidget_9 = QWidget(self.Question_2)
+        self.horizontalLayoutWidget_9.setObjectName(u"horizontalLayoutWidget_9")
+        self.horizontalLayoutWidget_9.setGeometry(QRect(0, 0, 651, 81))
+        self.horizontalLayout_15 = QHBoxLayout(self.horizontalLayoutWidget_9)
+        self.horizontalLayout_15.setSpacing(1)
+        self.horizontalLayout_15.setObjectName(u"horizontalLayout_15")
+        self.horizontalLayout_15.setContentsMargins(0, 0, 0, 0)
+        self.label_12 = QLabel(self.horizontalLayoutWidget_9)
+        self.label_12.setObjectName(u"label_12")
+        self.label_12.setMaximumSize(QSize(80, 16777215))
+
+        self.horizontalLayout_15.addWidget(self.label_12)
+
+        self.radioButton_11 = QRadioButton(self.horizontalLayoutWidget_9)
+        self.radioButton_11.setObjectName(u"radioButton_11")
+        self.radioButton_11.setMaximumSize(QSize(35, 16777215))
+
+        self.horizontalLayout_15.addWidget(self.radioButton_11)
+
+        self.radioButton_12 = QRadioButton(self.horizontalLayoutWidget_9)
+        self.radioButton_12.setObjectName(u"radioButton_12")
+        self.radioButton_12.setMaximumSize(QSize(35, 16777215))
+
+        self.horizontalLayout_15.addWidget(self.radioButton_12)
+
+        self.radioButton_13 = QRadioButton(self.horizontalLayoutWidget_9)
+        self.radioButton_13.setObjectName(u"radioButton_13")
+        self.radioButton_13.setMaximumSize(QSize(35, 16777215))
+
+        self.horizontalLayout_15.addWidget(self.radioButton_13)
+
+        self.radioButton_14 = QRadioButton(self.horizontalLayoutWidget_9)
+        self.radioButton_14.setObjectName(u"radioButton_14")
+        self.radioButton_14.setMaximumSize(QSize(35, 16777215))
+
+        self.horizontalLayout_15.addWidget(self.radioButton_14)
+
+        self.radioButton_15 = QRadioButton(self.horizontalLayoutWidget_9)
+        self.radioButton_15.setObjectName(u"radioButton_15")
+        self.radioButton_15.setMaximumSize(QSize(35, 16777215))
+
+        self.horizontalLayout_15.addWidget(self.radioButton_15)
+
+        self.radioButton_16 = QRadioButton(self.horizontalLayoutWidget_9)
+        self.radioButton_16.setObjectName(u"radioButton_16")
+        self.radioButton_16.setMaximumSize(QSize(35, 16777215))
+
+        self.horizontalLayout_15.addWidget(self.radioButton_16)
+
+        self.radioButton_17 = QRadioButton(self.horizontalLayoutWidget_9)
+        self.radioButton_17.setObjectName(u"radioButton_17")
+        self.radioButton_17.setMaximumSize(QSize(35, 16777215))
+
+        self.horizontalLayout_15.addWidget(self.radioButton_17)
+
+        self.radioButton_18 = QRadioButton(self.horizontalLayoutWidget_9)
+        self.radioButton_18.setObjectName(u"radioButton_18")
+        self.radioButton_18.setMaximumSize(QSize(35, 16777215))
+
+        self.horizontalLayout_15.addWidget(self.radioButton_18)
+
+        self.radioButton_19 = QRadioButton(self.horizontalLayoutWidget_9)
+        self.radioButton_19.setObjectName(u"radioButton_19")
+        self.radioButton_19.setMaximumSize(QSize(35, 16777215))
+
+        self.horizontalLayout_15.addWidget(self.radioButton_19)
+
+        self.radioButton_20 = QRadioButton(self.horizontalLayoutWidget_9)
+        self.radioButton_20.setObjectName(u"radioButton_20")
+        self.radioButton_20.setMaximumSize(QSize(35, 16777215))
+
+        self.horizontalLayout_15.addWidget(self.radioButton_20)
+
+        self.stackedWidget.addWidget(self.SurvayPage)
+        self.StatusPanel = QLabel(self.centralwidget)
+        self.StatusPanel.setObjectName(u"StatusPanel")
+        self.StatusPanel.setGeometry(QRect(10, 90, 171, 21))
+        self.StatusPanel_2 = QGroupBox(self.centralwidget)
+        self.StatusPanel_2.setObjectName(u"StatusPanel_2")
+        self.StatusPanel_2.setGeometry(QRect(10, 120, 171, 81))
+        self.verticalLayoutWidget = QWidget(self.StatusPanel_2)
+        self.verticalLayoutWidget.setObjectName(u"verticalLayoutWidget")
+        self.verticalLayoutWidget.setGeometry(QRect(0, 0, 171, 81))
+        self.verticalLayout = QVBoxLayout(self.verticalLayoutWidget)
+        self.verticalLayout.setSpacing(0)
+        self.verticalLayout.setObjectName(u"verticalLayout")
+        self.verticalLayout.setContentsMargins(2, 2, 0, 0)
+        self.Label_adaptive_mode = QLabel(self.verticalLayoutWidget)
+        self.Label_adaptive_mode.setObjectName(u"Label_adaptive_mode")
+        self.Label_adaptive_mode.setMaximumSize(QSize(170, 16777215))
+        self.Label_adaptive_mode.setSizeIncrement(QSize(0, 0))
+
+        self.verticalLayout.addWidget(self.Label_adaptive_mode)
+
+        self.Label_ML_status = QLabel(self.verticalLayoutWidget)
+        self.Label_ML_status.setObjectName(u"Label_ML_status")
+
+        self.verticalLayout.addWidget(self.Label_ML_status)
+
+        self.Label_robot_status = QLabel(self.verticalLayoutWidget)
+        self.Label_robot_status.setObjectName(u"Label_robot_status")
+
+        self.verticalLayout.addWidget(self.Label_robot_status)
+
+        self.TimeLabel = QLabel(self.centralwidget)
+        self.TimeLabel.setObjectName(u"TimeLabel")
+        self.TimeLabel.setGeometry(QRect(10, 10, 121, 16))
+        self.Positions = QGroupBox(self.centralwidget)
+        self.Positions.setObjectName(u"Positions")
+        self.Positions.setGeometry(QRect(10, 480, 171, 141))
+        self.OutputPos = QTextEdit(self.Positions)
+        self.OutputPos.setObjectName(u"OutputPos")
+        self.OutputPos.setGeometry(QRect(0, 0, 171, 141))
+        self.OutputPos.setReadOnly(True)
+        self.OutLog = QGroupBox(self.centralwidget)
+        self.OutLog.setObjectName(u"OutLog")
+        self.OutLog.setGeometry(QRect(10, 220, 171, 221))
+        self.verticalLayoutWidget_7 = QWidget(self.OutLog)
+        self.verticalLayoutWidget_7.setObjectName(u"verticalLayoutWidget_7")
+        self.verticalLayoutWidget_7.setGeometry(QRect(0, 0, 171, 221))
+        self.verticalLayout_11 = QVBoxLayout(self.verticalLayoutWidget_7)
+        self.verticalLayout_11.setObjectName(u"verticalLayout_11")
+        self.verticalLayout_11.setContentsMargins(0, 0, 0, 0)
+        self.Output = QTextEdit(self.verticalLayoutWidget_7)
+        self.Output.setObjectName(u"Output")
+        self.Output.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOn)
+        self.Output.setReadOnly(True)
+
+        self.verticalLayout_11.addWidget(self.Output)
+
+        self.PagesButton = QGroupBox(self.centralwidget)
+        self.PagesButton.setObjectName(u"PagesButton")
+        self.PagesButton.setGeometry(QRect(10, 30, 861, 51))
+        self.horizontalLayoutWidget_2 = QWidget(self.PagesButton)
+        self.horizontalLayoutWidget_2.setObjectName(u"horizontalLayoutWidget_2")
+        self.horizontalLayoutWidget_2.setGeometry(QRect(0, 0, 861, 51))
+        self.horizontalLayout_2 = QHBoxLayout(self.horizontalLayoutWidget_2)
+        self.horizontalLayout_2.setSpacing(10)
+        self.horizontalLayout_2.setObjectName(u"horizontalLayout_2")
+        self.horizontalLayout_2.setContentsMargins(2, 2, 2, 0)
+        self.ControlPageButton = QPushButton(self.horizontalLayoutWidget_2)
+        self.ControlPageButton.setObjectName(u"ControlPageButton")
+        sizePolicy1.setHeightForWidth(self.ControlPageButton.sizePolicy().hasHeightForWidth())
+        self.ControlPageButton.setSizePolicy(sizePolicy1)
+        self.ControlPageButton.setMaximumSize(QSize(16777215, 50))
+
+        self.horizontalLayout_2.addWidget(self.ControlPageButton)
+
+        self.SurveyPageButton = QPushButton(self.horizontalLayoutWidget_2)
+        self.SurveyPageButton.setObjectName(u"SurveyPageButton")
+        sizePolicy1.setHeightForWidth(self.SurveyPageButton.sizePolicy().hasHeightForWidth())
+        self.SurveyPageButton.setSizePolicy(sizePolicy1)
+        self.SurveyPageButton.setMaximumSize(QSize(16777215, 50))
+
+        self.horizontalLayout_2.addWidget(self.SurveyPageButton)
+
+        self.pushButton_5 = QPushButton(self.horizontalLayoutWidget_2)
+        self.pushButton_5.setObjectName(u"pushButton_5")
+        self.pushButton_5.setEnabled(True)
+        sizePolicy1.setHeightForWidth(self.pushButton_5.sizePolicy().hasHeightForWidth())
+        self.pushButton_5.setSizePolicy(sizePolicy1)
+        self.pushButton_5.setMaximumSize(QSize(16777215, 50))
+
+        self.horizontalLayout_2.addWidget(self.pushButton_5)
+
+        self.pushButton_6 = QPushButton(self.horizontalLayoutWidget_2)
+        self.pushButton_6.setObjectName(u"pushButton_6")
+        sizePolicy1.setHeightForWidth(self.pushButton_6.sizePolicy().hasHeightForWidth())
+        self.pushButton_6.setSizePolicy(sizePolicy1)
+        self.pushButton_6.setMaximumSize(QSize(16777215, 50))
+
+        self.horizontalLayout_2.addWidget(self.pushButton_6)
+
+        self.pushButton_7 = QPushButton(self.horizontalLayoutWidget_2)
+        self.pushButton_7.setObjectName(u"pushButton_7")
+        sizePolicy1.setHeightForWidth(self.pushButton_7.sizePolicy().hasHeightForWidth())
+        self.pushButton_7.setSizePolicy(sizePolicy1)
+        self.pushButton_7.setMaximumSize(QSize(16777215, 50))
+
+        self.horizontalLayout_2.addWidget(self.pushButton_7)
+
+        self.pushButton_8 = QPushButton(self.horizontalLayoutWidget_2)
+        self.pushButton_8.setObjectName(u"pushButton_8")
+        sizePolicy1.setHeightForWidth(self.pushButton_8.sizePolicy().hasHeightForWidth())
+        self.pushButton_8.setSizePolicy(sizePolicy1)
+        self.pushButton_8.setMaximumSize(QSize(16777215, 50))
+
+        self.horizontalLayout_2.addWidget(self.pushButton_8)
+
+        self.AutomaticModeButton = QCheckBox(self.centralwidget)
+        self.AutomaticModeButton.setObjectName(u"AutomaticModeButton")
+        self.AutomaticModeButton.setGeometry(QRect(610, 0, 61, 21))
+        self.AutomaticModeButton.setTristate(False)
+        self.StatusRobot = QGroupBox(self.centralwidget)
+        self.StatusRobot.setObjectName(u"StatusRobot")
+        self.StatusRobot.setGeometry(QRect(680, 0, 191, 21))
+        self.horizontalLayoutWidget_8 = QWidget(self.StatusRobot)
+        self.horizontalLayoutWidget_8.setObjectName(u"horizontalLayoutWidget_8")
+        self.horizontalLayoutWidget_8.setGeometry(QRect(0, 0, 191, 21))
+        self.horizontalLayout_14 = QHBoxLayout(self.horizontalLayoutWidget_8)
+        self.horizontalLayout_14.setObjectName(u"horizontalLayout_14")
+        self.horizontalLayout_14.setContentsMargins(0, 0, 0, 0)
+        self.label_moving = QLabel(self.horizontalLayoutWidget_8)
+        self.label_moving.setObjectName(u"label_moving")
+
+        self.horizontalLayout_14.addWidget(self.label_moving)
+
+        self.label_6 = QLabel(self.horizontalLayoutWidget_8)
+        self.label_6.setObjectName(u"label_6")
+
+        self.horizontalLayout_14.addWidget(self.label_6)
+
+        self.label_7 = QLabel(self.horizontalLayoutWidget_8)
+        self.label_7.setObjectName(u"label_7")
+
+        self.horizontalLayout_14.addWidget(self.label_7)
+
+        MainWindow.setCentralWidget(self.centralwidget)
+        self.menubar = QMenuBar(MainWindow)
+        self.menubar.setObjectName(u"menubar")
+        self.menubar.setGeometry(QRect(0, 0, 875, 21))
+        MainWindow.setMenuBar(self.menubar)
+        self.statusbar = QStatusBar(MainWindow)
+        self.statusbar.setObjectName(u"statusbar")
+        MainWindow.setStatusBar(self.statusbar)
+
+        self.retranslateUi(MainWindow)
+
+        self.stackedWidget.setCurrentIndex(0)
+
+
+        QMetaObject.connectSlotsByName(MainWindow)
+    # setupUi
+
+    def retranslateUi(self, MainWindow):
+        MainWindow.setWindowTitle(QCoreApplication.translate("MainWindow", u"MainWindow", None))
+        self.MoveBox.setTitle("")
+        self.XForward.setText(QCoreApplication.translate("MainWindow", u"X+", None))
+        self.XBackward.setText(QCoreApplication.translate("MainWindow", u"X-", None))
+        self.YForward.setText(QCoreApplication.translate("MainWindow", u"Y+", None))
+        self.YBackward.setText(QCoreApplication.translate("MainWindow", u"Y-", None))
+        self.ZForward.setText(QCoreApplication.translate("MainWindow", u"Z+", None))
+        self.ZBackward.setText(QCoreApplication.translate("MainWindow", u"Z-", None))
+        self.AForward.setText(QCoreApplication.translate("MainWindow", u"A+", None))
+        self.ABackward.setText(QCoreApplication.translate("MainWindow", u"A-", None))
+        self.BForward.setText(QCoreApplication.translate("MainWindow", u"B+", None))
+        self.BBackward.setText(QCoreApplication.translate("MainWindow", u"B-", None))
+        self.CForward.setText(QCoreApplication.translate("MainWindow", u"C+", None))
+        self.CBackward.setText(QCoreApplication.translate("MainWindow", u"C-", None))
+        self.OutputCode.setTitle("")
+        self.Code.setHtml(QCoreApplication.translate("MainWindow", u"<!DOCTYPE HTML PUBLIC \"-//W3C//DTD HTML 4.0//EN\" \"http://www.w3.org/TR/REC-html40/strict.dtd\">\n"
+"<html><head><meta name=\"qrichtext\" content=\"1\" /><style type=\"text/css\">\n"
+"p, li { white-space: pre-wrap; }\n"
+"</style></head><body style=\" font-family:'MS Shell Dlg 2'; font-size:8.25pt; font-weight:400; font-style:normal;\">\n"
+"<p style=\"-qt-paragraph-type:empty; margin-top:0px; margin-bottom:0px; margin-left:0px; margin-right:0px; -qt-block-indent:0; text-indent:0px;\"><br /></p></body></html>", None))
+        self.ParametrsButtons.setTitle("")
+        self.HomeButton.setText(QCoreApplication.translate("MainWindow", u"Home", None))
+        self.SavePointButton.setText(QCoreApplication.translate("MainWindow", u"SavePoint", None))
+        self.pushButton_23.setText("")
+        self.ClearProgramButtons.setText(QCoreApplication.translate("MainWindow", u"ClearProgram", None))
+        self.StatusSurvey.setTitle("")
+        self.label_8.setText(QCoreApplication.translate("MainWindow", u"TextLabel", None))
+        self.last_survey.setText(QCoreApplication.translate("MainWindow", u"TextLabel", None))
+        self.interval_survey.setText(QCoreApplication.translate("MainWindow", u"TextLabel", None))
+        self.Question_1.setTitle("")
+        self.label_11.setText(QCoreApplication.translate("MainWindow", u"\u0423\u0441\u0442\u0430\u043b\u043e\u0441\u0442\u044c:", None))
+        self.radioButton.setText(QCoreApplication.translate("MainWindow", u"1", None))
+        self.radioButton_2.setText(QCoreApplication.translate("MainWindow", u"2", None))
+        self.radioButton_3.setText(QCoreApplication.translate("MainWindow", u"3", None))
+        self.radioButton_4.setText(QCoreApplication.translate("MainWindow", u"4", None))
+        self.radioButton_5.setText(QCoreApplication.translate("MainWindow", u"5", None))
+        self.radioButton_6.setText(QCoreApplication.translate("MainWindow", u"6", None))
+        self.radioButton_8.setText(QCoreApplication.translate("MainWindow", u"7", None))
+        self.radioButton_7.setText(QCoreApplication.translate("MainWindow", u"8", None))
+        self.radioButton_9.setText(QCoreApplication.translate("MainWindow", u"9", None))
+        self.radioButton_10.setText(QCoreApplication.translate("MainWindow", u"10", None))
+        self.HistorySurvey.setTitle(QCoreApplication.translate("MainWindow", u"\u0418\u0441\u0442\u043e\u0440\u0438\u044f", None))
+        self.SentAnswer.setText(QCoreApplication.translate("MainWindow", u"\u041e\u0442\u043f\u0440\u0430\u0432\u0438\u0442\u044c", None))
+        self.Question_2.setTitle("")
+        self.label_12.setText(QCoreApplication.translate("MainWindow", u"\u041a\u043e\u043d\u0446\u0435\u043d\u0442\u0440\u0430\u0446\u0438\u044f", None))
+        self.radioButton_11.setText(QCoreApplication.translate("MainWindow", u"1", None))
+        self.radioButton_12.setText(QCoreApplication.translate("MainWindow", u"2", None))
+        self.radioButton_13.setText(QCoreApplication.translate("MainWindow", u"3", None))
+        self.radioButton_14.setText(QCoreApplication.translate("MainWindow", u"4", None))
+        self.radioButton_15.setText(QCoreApplication.translate("MainWindow", u"5", None))
+        self.radioButton_16.setText(QCoreApplication.translate("MainWindow", u"6", None))
+        self.radioButton_17.setText(QCoreApplication.translate("MainWindow", u"7", None))
+        self.radioButton_18.setText(QCoreApplication.translate("MainWindow", u"8", None))
+        self.radioButton_19.setText(QCoreApplication.translate("MainWindow", u"9", None))
+        self.radioButton_20.setText(QCoreApplication.translate("MainWindow", u"10", None))
+        self.StatusPanel.setText(QCoreApplication.translate("MainWindow", u"TextLabel", None))
+        self.StatusPanel_2.setTitle("")
+        self.Label_adaptive_mode.setText(QCoreApplication.translate("MainWindow", u"TextLabel", None))
+        self.Label_ML_status.setText(QCoreApplication.translate("MainWindow", u"TextLabel", None))
+        self.Label_robot_status.setText(QCoreApplication.translate("MainWindow", u"TextLabel", None))
+        self.TimeLabel.setText(QCoreApplication.translate("MainWindow", u"Time: ", None))
+        self.Positions.setTitle("")
+        self.OutLog.setTitle("")
+        self.PagesButton.setTitle("")
+        self.ControlPageButton.setText(QCoreApplication.translate("MainWindow", u"\u0423\u043f\u0440\u0430\u0432\u043b\u0435\u043d\u0438\u0435", None))
+        self.SurveyPageButton.setText(QCoreApplication.translate("MainWindow", u"\u041e\u043f\u0440\u043e\u0441", None))
+        self.pushButton_5.setText(QCoreApplication.translate("MainWindow", u"PushButton", None))
+        self.pushButton_6.setText(QCoreApplication.translate("MainWindow", u"PushButton", None))
+        self.pushButton_7.setText(QCoreApplication.translate("MainWindow", u"PushButton", None))
+        self.pushButton_8.setText(QCoreApplication.translate("MainWindow", u"PushButton", None))
+        self.AutomaticModeButton.setText(QCoreApplication.translate("MainWindow", u"\u0410\u0432\u0442\u043e", None))
+        self.StatusRobot.setTitle("")
+        self.label_moving.setText(QCoreApplication.translate("MainWindow", u"TextLabel", None))
+        self.label_6.setText(QCoreApplication.translate("MainWindow", u"TextLabel", None))
+        self.label_7.setText(QCoreApplication.translate("MainWindow", u"TextLabel", None))
+    # retranslateUi
+
+Gui.ui:
+<?xml version="1.0" encoding="UTF-8"?>
+<ui version="4.0">
+ <class>MainWindow</class>
+ <widget class="QMainWindow" name="MainWindow">
+  <property name="geometry">
+   <rect>
+    <x>0</x>
+    <y>0</y>
+    <width>880</width>
+    <height>670</height>
+   </rect>
+  </property>
+  <property name="windowTitle">
+   <string>MainWindow</string>
+  </property>
+  <widget class="QWidget" name="centralwidget">
+   <widget class="QStackedWidget" name="stackedWidget">
+    <property name="geometry">
+     <rect>
+      <x>200</x>
+      <y>80</y>
+      <width>671</width>
+      <height>551</height>
+     </rect>
+    </property>
+    <property name="currentIndex">
+     <number>0</number>
+    </property>
+    <widget class="QWidget" name="ControlPage">
+     <widget class="QGroupBox" name="MoveBox">
+      <property name="geometry">
+       <rect>
+        <x>490</x>
+        <y>10</y>
+        <width>181</width>
+        <height>471</height>
+       </rect>
+      </property>
+      <property name="title">
+       <string/>
+      </property>
+      <widget class="QWidget" name="verticalLayoutWidget_2">
+       <property name="geometry">
+        <rect>
+         <x>0</x>
+         <y>0</y>
+         <width>181</width>
+         <height>471</height>
+        </rect>
+       </property>
+       <layout class="QVBoxLayout" name="verticalLayout_6">
+        <item>
+         <layout class="QHBoxLayout" name="horizontalLayout_5">
+          <item>
+           <widget class="QPushButton" name="XForward">
+            <property name="sizePolicy">
+             <sizepolicy hsizetype="Fixed" vsizetype="Fixed">
+              <horstretch>0</horstretch>
+              <verstretch>0</verstretch>
+             </sizepolicy>
+            </property>
+            <property name="maximumSize">
+             <size>
+              <width>16777215</width>
+              <height>50</height>
+             </size>
+            </property>
+            <property name="text">
+             <string>X+</string>
+            </property>
+           </widget>
+          </item>
+          <item>
+           <widget class="QPushButton" name="XBackward">
+            <property name="sizePolicy">
+             <sizepolicy hsizetype="Fixed" vsizetype="Fixed">
+              <horstretch>0</horstretch>
+              <verstretch>0</verstretch>
+             </sizepolicy>
+            </property>
+            <property name="maximumSize">
+             <size>
+              <width>16777215</width>
+              <height>50</height>
+             </size>
+            </property>
+            <property name="text">
+             <string>X-</string>
+            </property>
+           </widget>
+          </item>
+         </layout>
+        </item>
+        <item>
+         <layout class="QHBoxLayout" name="horizontalLayout_8">
+          <item>
+           <widget class="QPushButton" name="YForward">
+            <property name="enabled">
+             <bool>true</bool>
+            </property>
+            <property name="sizePolicy">
+             <sizepolicy hsizetype="Fixed" vsizetype="Fixed">
+              <horstretch>0</horstretch>
+              <verstretch>0</verstretch>
+             </sizepolicy>
+            </property>
+            <property name="maximumSize">
+             <size>
+              <width>16777215</width>
+              <height>50</height>
+             </size>
+            </property>
+            <property name="text">
+             <string>Y+</string>
+            </property>
+           </widget>
+          </item>
+          <item>
+           <widget class="QPushButton" name="YBackward">
+            <property name="enabled">
+             <bool>true</bool>
+            </property>
+            <property name="sizePolicy">
+             <sizepolicy hsizetype="Fixed" vsizetype="Fixed">
+              <horstretch>0</horstretch>
+              <verstretch>0</verstretch>
+             </sizepolicy>
+            </property>
+            <property name="maximumSize">
+             <size>
+              <width>16777215</width>
+              <height>50</height>
+             </size>
+            </property>
+            <property name="text">
+             <string>Y-</string>
+            </property>
+           </widget>
+          </item>
+         </layout>
+        </item>
+        <item>
+         <layout class="QHBoxLayout" name="horizontalLayout_9">
+          <item>
+           <widget class="QPushButton" name="ZForward">
+            <property name="enabled">
+             <bool>true</bool>
+            </property>
+            <property name="sizePolicy">
+             <sizepolicy hsizetype="Fixed" vsizetype="Fixed">
+              <horstretch>0</horstretch>
+              <verstretch>0</verstretch>
+             </sizepolicy>
+            </property>
+            <property name="maximumSize">
+             <size>
+              <width>16777215</width>
+              <height>50</height>
+             </size>
+            </property>
+            <property name="text">
+             <string>Z+</string>
+            </property>
+           </widget>
+          </item>
+          <item>
+           <widget class="QPushButton" name="ZBackward">
+            <property name="enabled">
+             <bool>true</bool>
+            </property>
+            <property name="sizePolicy">
+             <sizepolicy hsizetype="Fixed" vsizetype="Fixed">
+              <horstretch>0</horstretch>
+              <verstretch>0</verstretch>
+             </sizepolicy>
+            </property>
+            <property name="maximumSize">
+             <size>
+              <width>16777215</width>
+              <height>50</height>
+             </size>
+            </property>
+            <property name="text">
+             <string>Z-</string>
+            </property>
+           </widget>
+          </item>
+         </layout>
+        </item>
+        <item>
+         <layout class="QHBoxLayout" name="horizontalLayout_10">
+          <item>
+           <widget class="QPushButton" name="AForward">
+            <property name="enabled">
+             <bool>true</bool>
+            </property>
+            <property name="sizePolicy">
+             <sizepolicy hsizetype="Fixed" vsizetype="Fixed">
+              <horstretch>0</horstretch>
+              <verstretch>0</verstretch>
+             </sizepolicy>
+            </property>
+            <property name="maximumSize">
+             <size>
+              <width>16777215</width>
+              <height>50</height>
+             </size>
+            </property>
+            <property name="text">
+             <string>A+</string>
+            </property>
+           </widget>
+          </item>
+          <item>
+           <widget class="QPushButton" name="ABackward">
+            <property name="enabled">
+             <bool>true</bool>
+            </property>
+            <property name="sizePolicy">
+             <sizepolicy hsizetype="Fixed" vsizetype="Fixed">
+              <horstretch>0</horstretch>
+              <verstretch>0</verstretch>
+             </sizepolicy>
+            </property>
+            <property name="maximumSize">
+             <size>
+              <width>16777215</width>
+              <height>50</height>
+             </size>
+            </property>
+            <property name="text">
+             <string>A-</string>
+            </property>
+           </widget>
+          </item>
+         </layout>
+        </item>
+        <item>
+         <layout class="QHBoxLayout" name="horizontalLayout_11">
+          <item>
+           <widget class="QPushButton" name="BForward">
+            <property name="enabled">
+             <bool>true</bool>
+            </property>
+            <property name="sizePolicy">
+             <sizepolicy hsizetype="Fixed" vsizetype="Fixed">
+              <horstretch>0</horstretch>
+              <verstretch>0</verstretch>
+             </sizepolicy>
+            </property>
+            <property name="maximumSize">
+             <size>
+              <width>16777215</width>
+              <height>50</height>
+             </size>
+            </property>
+            <property name="text">
+             <string>B+</string>
+            </property>
+           </widget>
+          </item>
+          <item>
+           <widget class="QPushButton" name="BBackward">
+            <property name="enabled">
+             <bool>true</bool>
+            </property>
+            <property name="sizePolicy">
+             <sizepolicy hsizetype="Fixed" vsizetype="Fixed">
+              <horstretch>0</horstretch>
+              <verstretch>0</verstretch>
+             </sizepolicy>
+            </property>
+            <property name="maximumSize">
+             <size>
+              <width>16777215</width>
+              <height>50</height>
+             </size>
+            </property>
+            <property name="text">
+             <string>B-</string>
+            </property>
+           </widget>
+          </item>
+         </layout>
+        </item>
+        <item>
+         <layout class="QHBoxLayout" name="horizontalLayout_12">
+          <item>
+           <widget class="QPushButton" name="CForward">
+            <property name="enabled">
+             <bool>true</bool>
+            </property>
+            <property name="sizePolicy">
+             <sizepolicy hsizetype="Fixed" vsizetype="Fixed">
+              <horstretch>0</horstretch>
+              <verstretch>0</verstretch>
+             </sizepolicy>
+            </property>
+            <property name="maximumSize">
+             <size>
+              <width>16777215</width>
+              <height>50</height>
+             </size>
+            </property>
+            <property name="text">
+             <string>C+</string>
+            </property>
+           </widget>
+          </item>
+          <item>
+           <widget class="QPushButton" name="CBackward">
+            <property name="enabled">
+             <bool>true</bool>
+            </property>
+            <property name="sizePolicy">
+             <sizepolicy hsizetype="Fixed" vsizetype="Fixed">
+              <horstretch>0</horstretch>
+              <verstretch>0</verstretch>
+             </sizepolicy>
+            </property>
+            <property name="maximumSize">
+             <size>
+              <width>16777215</width>
+              <height>50</height>
+             </size>
+            </property>
+            <property name="text">
+             <string>C-</string>
+            </property>
+           </widget>
+          </item>
+         </layout>
+        </item>
+       </layout>
+      </widget>
+     </widget>
+     <widget class="QGroupBox" name="OutputCode">
+      <property name="geometry">
+       <rect>
+        <x>0</x>
+        <y>10</y>
+        <width>491</width>
+        <height>471</height>
+       </rect>
+      </property>
+      <property name="title">
+       <string/>
+      </property>
+      <widget class="QWidget" name="verticalLayoutWidget_5">
+       <property name="geometry">
+        <rect>
+         <x>10</x>
+         <y>10</y>
+         <width>471</width>
+         <height>451</height>
+        </rect>
+       </property>
+       <layout class="QVBoxLayout" name="verticalLayout_9"/>
+      </widget>
+      <widget class="QTextEdit" name="Code">
+       <property name="geometry">
+        <rect>
+         <x>0</x>
+         <y>0</y>
+         <width>491</width>
+         <height>471</height>
+        </rect>
+       </property>
+       <property name="readOnly">
+        <bool>true</bool>
+       </property>
+       <property name="html">
+        <string>&lt;!DOCTYPE HTML PUBLIC &quot;-//W3C//DTD HTML 4.0//EN&quot; &quot;http://www.w3.org/TR/REC-html40/strict.dtd&quot;&gt;
+&lt;html&gt;&lt;head&gt;&lt;meta name=&quot;qrichtext&quot; content=&quot;1&quot; /&gt;&lt;style type=&quot;text/css&quot;&gt;
+p, li { white-space: pre-wrap; }
+&lt;/style&gt;&lt;/head&gt;&lt;body style=&quot; font-family:'MS Shell Dlg 2'; font-size:8.25pt; font-weight:400; font-style:normal;&quot;&gt;
+&lt;p style=&quot;-qt-paragraph-type:empty; margin-top:0px; margin-bottom:0px; margin-left:0px; margin-right:0px; -qt-block-indent:0; text-indent:0px;&quot;&gt;&lt;br /&gt;&lt;/p&gt;&lt;/body&gt;&lt;/html&gt;</string>
+       </property>
+      </widget>
+     </widget>
+     <widget class="QGroupBox" name="ParametrsButtons">
+      <property name="geometry">
+       <rect>
+        <x>0</x>
+        <y>490</y>
+        <width>491</width>
+        <height>51</height>
+       </rect>
+      </property>
+      <property name="title">
+       <string/>
+      </property>
+      <widget class="QWidget" name="horizontalLayoutWidget">
+       <property name="geometry">
+        <rect>
+         <x>0</x>
+         <y>0</y>
+         <width>491</width>
+         <height>51</height>
+        </rect>
+       </property>
+       <layout class="QHBoxLayout" name="horizontalLayout">
+        <item>
+         <widget class="QPushButton" name="HomeButton">
+          <property name="sizePolicy">
+           <sizepolicy hsizetype="Minimum" vsizetype="Minimum">
+            <horstretch>0</horstretch>
+            <verstretch>0</verstretch>
+           </sizepolicy>
+          </property>
+          <property name="maximumSize">
+           <size>
+            <width>16777215</width>
+            <height>50</height>
+           </size>
+          </property>
+          <property name="text">
+           <string>Home</string>
+          </property>
+         </widget>
+        </item>
+        <item>
+         <widget class="QPushButton" name="SavePointButton">
+          <property name="sizePolicy">
+           <sizepolicy hsizetype="Minimum" vsizetype="Minimum">
+            <horstretch>0</horstretch>
+            <verstretch>0</verstretch>
+           </sizepolicy>
+          </property>
+          <property name="maximumSize">
+           <size>
+            <width>16777215</width>
+            <height>50</height>
+           </size>
+          </property>
+          <property name="text">
+           <string>SavePoint</string>
+          </property>
+         </widget>
+        </item>
+        <item>
+         <widget class="QPushButton" name="pushButton_23">
+          <property name="sizePolicy">
+           <sizepolicy hsizetype="Minimum" vsizetype="Minimum">
+            <horstretch>0</horstretch>
+            <verstretch>0</verstretch>
+           </sizepolicy>
+          </property>
+          <property name="maximumSize">
+           <size>
+            <width>16777215</width>
+            <height>50</height>
+           </size>
+          </property>
+          <property name="text">
+           <string/>
+          </property>
+         </widget>
+        </item>
+        <item>
+         <widget class="QPushButton" name="ClearProgramButtons">
+          <property name="sizePolicy">
+           <sizepolicy hsizetype="Minimum" vsizetype="Minimum">
+            <horstretch>0</horstretch>
+            <verstretch>0</verstretch>
+           </sizepolicy>
+          </property>
+          <property name="maximumSize">
+           <size>
+            <width>16777215</width>
+            <height>50</height>
+           </size>
+          </property>
+          <property name="text">
+           <string>ClearProgram</string>
+          </property>
+         </widget>
+        </item>
+       </layout>
+      </widget>
+     </widget>
+    </widget>
+    <widget class="QWidget" name="SurvayPage">
+     <widget class="QGroupBox" name="StatusSurvey">
+      <property name="geometry">
+       <rect>
+        <x>10</x>
+        <y>10</y>
+        <width>171</width>
+        <height>81</height>
+       </rect>
+      </property>
+      <property name="title">
+       <string/>
+      </property>
+      <widget class="QWidget" name="verticalLayoutWidget_3">
+       <property name="geometry">
+        <rect>
+         <x>0</x>
+         <y>0</y>
+         <width>171</width>
+         <height>80</height>
+        </rect>
+       </property>
+       <layout class="QVBoxLayout" name="verticalLayout_7">
+        <item>
+         <widget class="QLabel" name="label_8">
+          <property name="text">
+           <string>TextLabel</string>
+          </property>
+         </widget>
+        </item>
+        <item>
+         <widget class="QLabel" name="last_survey">
+          <property name="text">
+           <string>TextLabel</string>
+          </property>
+         </widget>
+        </item>
+        <item>
+         <widget class="QLabel" name="interval_survey">
+          <property name="text">
+           <string>TextLabel</string>
+          </property>
+         </widget>
+        </item>
+       </layout>
+      </widget>
+     </widget>
+     <widget class="QGroupBox" name="Question_1">
+      <property name="geometry">
+       <rect>
+        <x>10</x>
+        <y>120</y>
+        <width>651</width>
+        <height>81</height>
+       </rect>
+      </property>
+      <property name="title">
+       <string/>
+      </property>
+      <widget class="QWidget" name="horizontalLayoutWidget_7">
+       <property name="geometry">
+        <rect>
+         <x>0</x>
+         <y>0</y>
+         <width>651</width>
+         <height>81</height>
+        </rect>
+       </property>
+       <layout class="QHBoxLayout" name="horizontalLayout_13">
+        <property name="spacing">
+         <number>1</number>
+        </property>
+        <item>
+         <widget class="QLabel" name="label_11">
+          <property name="maximumSize">
+           <size>
+            <width>75</width>
+            <height>16777215</height>
+           </size>
+          </property>
+          <property name="text">
+           <string>Усталость:</string>
+          </property>
+         </widget>
+        </item>
+        <item>
+         <widget class="QRadioButton" name="radioButton">
+          <property name="maximumSize">
+           <size>
+            <width>35</width>
+            <height>16777215</height>
+           </size>
+          </property>
+          <property name="text">
+           <string>1</string>
+          </property>
+         </widget>
+        </item>
+        <item>
+         <widget class="QRadioButton" name="radioButton_2">
+          <property name="maximumSize">
+           <size>
+            <width>35</width>
+            <height>16777215</height>
+           </size>
+          </property>
+          <property name="text">
+           <string>2</string>
+          </property>
+         </widget>
+        </item>
+        <item>
+         <widget class="QRadioButton" name="radioButton_3">
+          <property name="maximumSize">
+           <size>
+            <width>35</width>
+            <height>16777215</height>
+           </size>
+          </property>
+          <property name="text">
+           <string>3</string>
+          </property>
+         </widget>
+        </item>
+        <item>
+         <widget class="QRadioButton" name="radioButton_4">
+          <property name="maximumSize">
+           <size>
+            <width>35</width>
+            <height>16777215</height>
+           </size>
+          </property>
+          <property name="text">
+           <string>4</string>
+          </property>
+         </widget>
+        </item>
+        <item>
+         <widget class="QRadioButton" name="radioButton_5">
+          <property name="maximumSize">
+           <size>
+            <width>35</width>
+            <height>16777215</height>
+           </size>
+          </property>
+          <property name="text">
+           <string>5</string>
+          </property>
+         </widget>
+        </item>
+        <item>
+         <widget class="QRadioButton" name="radioButton_6">
+          <property name="maximumSize">
+           <size>
+            <width>35</width>
+            <height>16777215</height>
+           </size>
+          </property>
+          <property name="text">
+           <string>6</string>
+          </property>
+         </widget>
+        </item>
+        <item>
+         <widget class="QRadioButton" name="radioButton_8">
+          <property name="maximumSize">
+           <size>
+            <width>35</width>
+            <height>16777215</height>
+           </size>
+          </property>
+          <property name="text">
+           <string>7</string>
+          </property>
+         </widget>
+        </item>
+        <item>
+         <widget class="QRadioButton" name="radioButton_7">
+          <property name="maximumSize">
+           <size>
+            <width>35</width>
+            <height>16777215</height>
+           </size>
+          </property>
+          <property name="text">
+           <string>8</string>
+          </property>
+         </widget>
+        </item>
+        <item>
+         <widget class="QRadioButton" name="radioButton_9">
+          <property name="maximumSize">
+           <size>
+            <width>35</width>
+            <height>16777215</height>
+           </size>
+          </property>
+          <property name="text">
+           <string>9</string>
+          </property>
+         </widget>
+        </item>
+        <item>
+         <widget class="QRadioButton" name="radioButton_10">
+          <property name="maximumSize">
+           <size>
+            <width>35</width>
+            <height>16777215</height>
+           </size>
+          </property>
+          <property name="text">
+           <string>10</string>
+          </property>
+         </widget>
+        </item>
+       </layout>
+      </widget>
+     </widget>
+     <widget class="QGroupBox" name="HistorySurvey">
+      <property name="geometry">
+       <rect>
+        <x>20</x>
+        <y>410</y>
+        <width>331</width>
+        <height>131</height>
+       </rect>
+      </property>
+      <property name="title">
+       <string>История</string>
+      </property>
+      <property name="flat">
+       <bool>false</bool>
+      </property>
+      <widget class="QWidget" name="verticalLayoutWidget_4">
+       <property name="geometry">
+        <rect>
+         <x>0</x>
+         <y>20</y>
+         <width>311</width>
+         <height>111</height>
+        </rect>
+       </property>
+       <layout class="QVBoxLayout" name="verticalLayout_8">
+        <item>
+         <widget class="QTextEdit" name="history_answer"/>
+        </item>
+       </layout>
+      </widget>
+     </widget>
+     <widget class="QPushButton" name="SentAnswer">
+      <property name="geometry">
+       <rect>
+        <x>530</x>
+        <y>480</y>
+        <width>111</width>
+        <height>41</height>
+       </rect>
+      </property>
+      <property name="text">
+       <string>Отправить</string>
+      </property>
+     </widget>
+     <widget class="QGroupBox" name="Question_2">
+      <property name="geometry">
+       <rect>
+        <x>10</x>
+        <y>210</y>
+        <width>651</width>
+        <height>81</height>
+       </rect>
+      </property>
+      <property name="title">
+       <string/>
+      </property>
+      <widget class="QWidget" name="horizontalLayoutWidget_9">
+       <property name="geometry">
+        <rect>
+         <x>0</x>
+         <y>0</y>
+         <width>651</width>
+         <height>81</height>
+        </rect>
+       </property>
+       <layout class="QHBoxLayout" name="horizontalLayout_15">
+        <property name="spacing">
+         <number>1</number>
+        </property>
+        <item>
+         <widget class="QLabel" name="label_12">
+          <property name="maximumSize">
+           <size>
+            <width>80</width>
+            <height>16777215</height>
+           </size>
+          </property>
+          <property name="text">
+           <string>Концентрация</string>
+          </property>
+         </widget>
+        </item>
+        <item>
+         <widget class="QRadioButton" name="radioButton_11">
+          <property name="maximumSize">
+           <size>
+            <width>35</width>
+            <height>16777215</height>
+           </size>
+          </property>
+          <property name="text">
+           <string>1</string>
+          </property>
+         </widget>
+        </item>
+        <item>
+         <widget class="QRadioButton" name="radioButton_12">
+          <property name="maximumSize">
+           <size>
+            <width>35</width>
+            <height>16777215</height>
+           </size>
+          </property>
+          <property name="text">
+           <string>2</string>
+          </property>
+         </widget>
+        </item>
+        <item>
+         <widget class="QRadioButton" name="radioButton_13">
+          <property name="maximumSize">
+           <size>
+            <width>35</width>
+            <height>16777215</height>
+           </size>
+          </property>
+          <property name="text">
+           <string>3</string>
+          </property>
+         </widget>
+        </item>
+        <item>
+         <widget class="QRadioButton" name="radioButton_14">
+          <property name="maximumSize">
+           <size>
+            <width>35</width>
+            <height>16777215</height>
+           </size>
+          </property>
+          <property name="text">
+           <string>4</string>
+          </property>
+         </widget>
+        </item>
+        <item>
+         <widget class="QRadioButton" name="radioButton_15">
+          <property name="maximumSize">
+           <size>
+            <width>35</width>
+            <height>16777215</height>
+           </size>
+          </property>
+          <property name="text">
+           <string>5</string>
+          </property>
+         </widget>
+        </item>
+        <item>
+         <widget class="QRadioButton" name="radioButton_16">
+          <property name="maximumSize">
+           <size>
+            <width>35</width>
+            <height>16777215</height>
+           </size>
+          </property>
+          <property name="text">
+           <string>6</string>
+          </property>
+         </widget>
+        </item>
+        <item>
+         <widget class="QRadioButton" name="radioButton_17">
+          <property name="maximumSize">
+           <size>
+            <width>35</width>
+            <height>16777215</height>
+           </size>
+          </property>
+          <property name="text">
+           <string>7</string>
+          </property>
+         </widget>
+        </item>
+        <item>
+         <widget class="QRadioButton" name="radioButton_18">
+          <property name="maximumSize">
+           <size>
+            <width>35</width>
+            <height>16777215</height>
+           </size>
+          </property>
+          <property name="text">
+           <string>8</string>
+          </property>
+         </widget>
+        </item>
+        <item>
+         <widget class="QRadioButton" name="radioButton_19">
+          <property name="maximumSize">
+           <size>
+            <width>35</width>
+            <height>16777215</height>
+           </size>
+          </property>
+          <property name="text">
+           <string>9</string>
+          </property>
+         </widget>
+        </item>
+        <item>
+         <widget class="QRadioButton" name="radioButton_20">
+          <property name="maximumSize">
+           <size>
+            <width>35</width>
+            <height>16777215</height>
+           </size>
+          </property>
+          <property name="text">
+           <string>10</string>
+          </property>
+         </widget>
+        </item>
+       </layout>
+      </widget>
+     </widget>
+    </widget>
+   </widget>
+   <widget class="QLabel" name="StatusPanel">
+    <property name="geometry">
+     <rect>
+      <x>10</x>
+      <y>90</y>
+      <width>171</width>
+      <height>21</height>
+     </rect>
+    </property>
+    <property name="text">
+     <string>TextLabel</string>
+    </property>
+   </widget>
+   <widget class="QGroupBox" name="StatusPanel_2">
+    <property name="geometry">
+     <rect>
+      <x>10</x>
+      <y>120</y>
+      <width>171</width>
+      <height>81</height>
+     </rect>
+    </property>
+    <property name="title">
+     <string/>
+    </property>
+    <widget class="QWidget" name="verticalLayoutWidget">
+     <property name="geometry">
+      <rect>
+       <x>0</x>
+       <y>0</y>
+       <width>171</width>
+       <height>81</height>
+      </rect>
+     </property>
+     <layout class="QVBoxLayout" name="verticalLayout">
+      <property name="spacing">
+       <number>0</number>
+      </property>
+      <property name="leftMargin">
+       <number>2</number>
+      </property>
+      <property name="topMargin">
+       <number>2</number>
+      </property>
+      <property name="rightMargin">
+       <number>0</number>
+      </property>
+      <item>
+       <widget class="QLabel" name="Label_adaptive_mode">
+        <property name="maximumSize">
+         <size>
+          <width>170</width>
+          <height>16777215</height>
+         </size>
+        </property>
+        <property name="sizeIncrement">
+         <size>
+          <width>0</width>
+          <height>0</height>
+         </size>
+        </property>
+        <property name="text">
+         <string>TextLabel</string>
+        </property>
+       </widget>
+      </item>
+      <item>
+       <widget class="QLabel" name="Label_ML_status">
+        <property name="text">
+         <string>TextLabel</string>
+        </property>
+       </widget>
+      </item>
+      <item>
+       <widget class="QLabel" name="Label_robot_status">
+        <property name="text">
+         <string>TextLabel</string>
+        </property>
+       </widget>
+      </item>
+     </layout>
+    </widget>
+   </widget>
+   <widget class="QLabel" name="TimeLabel">
+    <property name="geometry">
+     <rect>
+      <x>10</x>
+      <y>10</y>
+      <width>121</width>
+      <height>16</height>
+     </rect>
+    </property>
+    <property name="text">
+     <string>Time: </string>
+    </property>
+   </widget>
+   <widget class="QGroupBox" name="Positions">
+    <property name="geometry">
+     <rect>
+      <x>10</x>
+      <y>480</y>
+      <width>171</width>
+      <height>141</height>
+     </rect>
+    </property>
+    <property name="title">
+     <string/>
+    </property>
+    <widget class="QTextEdit" name="OutputPos">
+     <property name="geometry">
+      <rect>
+       <x>0</x>
+       <y>0</y>
+       <width>171</width>
+       <height>141</height>
+      </rect>
+     </property>
+     <property name="readOnly">
+      <bool>true</bool>
+     </property>
+    </widget>
+   </widget>
+   <widget class="QGroupBox" name="OutLog">
+    <property name="geometry">
+     <rect>
+      <x>10</x>
+      <y>220</y>
+      <width>171</width>
+      <height>221</height>
+     </rect>
+    </property>
+    <property name="title">
+     <string/>
+    </property>
+    <widget class="QWidget" name="verticalLayoutWidget_7">
+     <property name="geometry">
+      <rect>
+       <x>0</x>
+       <y>0</y>
+       <width>171</width>
+       <height>221</height>
+      </rect>
+     </property>
+     <layout class="QVBoxLayout" name="verticalLayout_11">
+      <item>
+       <widget class="QTextEdit" name="Output">
+        <property name="verticalScrollBarPolicy">
+         <enum>Qt::ScrollBarAlwaysOn</enum>
+        </property>
+        <property name="readOnly">
+         <bool>true</bool>
+        </property>
+       </widget>
+      </item>
+     </layout>
+    </widget>
+   </widget>
+   <widget class="QGroupBox" name="PagesButton">
+    <property name="geometry">
+     <rect>
+      <x>10</x>
+      <y>30</y>
+      <width>861</width>
+      <height>51</height>
+     </rect>
+    </property>
+    <property name="title">
+     <string/>
+    </property>
+    <widget class="QWidget" name="horizontalLayoutWidget_2">
+     <property name="geometry">
+      <rect>
+       <x>0</x>
+       <y>0</y>
+       <width>861</width>
+       <height>51</height>
+      </rect>
+     </property>
+     <layout class="QHBoxLayout" name="horizontalLayout_2">
+      <property name="spacing">
+       <number>8</number>
+      </property>
+      <property name="leftMargin">
+       <number>2</number>
+      </property>
+      <property name="topMargin">
+       <number>2</number>
+      </property>
+      <property name="rightMargin">
+       <number>2</number>
+      </property>
+      <property name="bottomMargin">
+       <number>0</number>
+      </property>
+      <item>
+       <widget class="QPushButton" name="ControlPageButton">
+        <property name="sizePolicy">
+         <sizepolicy hsizetype="Minimum" vsizetype="Minimum">
+          <horstretch>0</horstretch>
+          <verstretch>0</verstretch>
+         </sizepolicy>
+        </property>
+        <property name="maximumSize">
+         <size>
+          <width>16777215</width>
+          <height>50</height>
+         </size>
+        </property>
+        <property name="text">
+         <string>Управление</string>
+        </property>
+       </widget>
+      </item>
+      <item>
+       <widget class="QPushButton" name="SurveyPageButton">
+        <property name="sizePolicy">
+         <sizepolicy hsizetype="Minimum" vsizetype="Minimum">
+          <horstretch>0</horstretch>
+          <verstretch>0</verstretch>
+         </sizepolicy>
+        </property>
+        <property name="maximumSize">
+         <size>
+          <width>16777215</width>
+          <height>50</height>
+         </size>
+        </property>
+        <property name="text">
+         <string>Опрос</string>
+        </property>
+       </widget>
+      </item>
+      <item>
+       <widget class="QPushButton" name="pushButton_5">
+        <property name="enabled">
+         <bool>true</bool>
+        </property>
+        <property name="sizePolicy">
+         <sizepolicy hsizetype="Minimum" vsizetype="Minimum">
+          <horstretch>0</horstretch>
+          <verstretch>0</verstretch>
+         </sizepolicy>
+        </property>
+        <property name="maximumSize">
+         <size>
+          <width>16777215</width>
+          <height>50</height>
+         </size>
+        </property>
+        <property name="text">
+         <string>PushButton</string>
+        </property>
+       </widget>
+      </item>
+      <item>
+       <widget class="QPushButton" name="pushButton_6">
+        <property name="sizePolicy">
+         <sizepolicy hsizetype="Minimum" vsizetype="Minimum">
+          <horstretch>0</horstretch>
+          <verstretch>0</verstretch>
+         </sizepolicy>
+        </property>
+        <property name="maximumSize">
+         <size>
+          <width>16777215</width>
+          <height>50</height>
+         </size>
+        </property>
+        <property name="text">
+         <string>PushButton</string>
+        </property>
+       </widget>
+      </item>
+      <item>
+       <widget class="QPushButton" name="pushButton_7">
+        <property name="sizePolicy">
+         <sizepolicy hsizetype="Minimum" vsizetype="Minimum">
+          <horstretch>0</horstretch>
+          <verstretch>0</verstretch>
+         </sizepolicy>
+        </property>
+        <property name="maximumSize">
+         <size>
+          <width>16777215</width>
+          <height>50</height>
+         </size>
+        </property>
+        <property name="text">
+         <string>PushButton</string>
+        </property>
+       </widget>
+      </item>
+      <item>
+       <widget class="QPushButton" name="pushButton_8">
+        <property name="sizePolicy">
+         <sizepolicy hsizetype="Minimum" vsizetype="Minimum">
+          <horstretch>0</horstretch>
+          <verstretch>0</verstretch>
+         </sizepolicy>
+        </property>
+        <property name="maximumSize">
+         <size>
+          <width>16777215</width>
+          <height>50</height>
+         </size>
+        </property>
+        <property name="text">
+         <string>PushButton</string>
+        </property>
+       </widget>
+      </item>
+     </layout>
+    </widget>
+   </widget>
+   <widget class="QCheckBox" name="AutomaticModeButton">
+    <property name="geometry">
+     <rect>
+      <x>610</x>
+      <y>0</y>
+      <width>61</width>
+      <height>21</height>
+     </rect>
+    </property>
+    <property name="text">
+     <string>Авто</string>
+    </property>
+    <property name="tristate">
+     <bool>false</bool>
+    </property>
+   </widget>
+   <widget class="QGroupBox" name="StatusRobot">
+    <property name="geometry">
+     <rect>
+      <x>680</x>
+      <y>0</y>
+      <width>191</width>
+      <height>21</height>
+     </rect>
+    </property>
+    <property name="title">
+     <string/>
+    </property>
+    <widget class="QWidget" name="horizontalLayoutWidget_8">
+     <property name="geometry">
+      <rect>
+       <x>0</x>
+       <y>0</y>
+       <width>191</width>
+       <height>21</height>
+      </rect>
+     </property>
+     <layout class="QHBoxLayout" name="horizontalLayout_14">
+      <item>
+       <widget class="QLabel" name="label_moving">
+        <property name="text">
+         <string>TextLabel</string>
+        </property>
+       </widget>
+      </item>
+      <item>
+       <widget class="QLabel" name="label_6">
+        <property name="text">
+         <string>TextLabel</string>
+        </property>
+       </widget>
+      </item>
+      <item>
+       <widget class="QLabel" name="label_7">
+        <property name="text">
+         <string>TextLabel</string>
+        </property>
+       </widget>
+      </item>
+     </layout>
+    </widget>
+   </widget>
+  </widget>
+  <widget class="QMenuBar" name="menubar">
+   <property name="geometry">
+    <rect>
+     <x>0</x>
+     <y>0</y>
+     <width>880</width>
+     <height>21</height>
+    </rect>
+   </property>
+  </widget>
+  <widget class="QStatusBar" name="statusbar"/>
+ </widget>
+ <resources/>
+ <connections/>
+</ui>

@@ -40,26 +40,26 @@ class MLServer:
                         if timestamp_str:
                             try:
                                 from datetime import datetime
-                                timestamp = datetime.fromtimestamp(timestamp)
+                                timestamp = datetime.fromisoformat(timestamp_str.replace('Z', '+00:00'))
                             except:
                                 timestamp = now()
                         else:
                             timestamp = now()
                          
-                        prediction, confidence  = self.model.predict(timestamp)
+                        prediction, confidence, prob_class1  = self.model.predict(timestamp)
                         
                         response = {
                             'type': 'prediction',
                             'prediction': bool(prediction),
                             'confidence': float(confidence),
                             'threshold_used': float(self.model.confidence_threshold),
-                            'requires_adaptation': confidence > self.model.confidence_threshold,
+                            'requires_adaptation': bool(prob_class1 > self.model.confidence_threshold),
                             'timestamp': timestamp.isoformat()
                         }
 
                         #Логируем предсказание
                         self.db.log_command(
-                            source="ml_client",
+                            source="server_ml",
                             command="predict",
                             parameters= f"timestamp: {timestamp}, prediction: {prediction}, confidence: {confidence:.2f}",
                             success=True
@@ -116,9 +116,9 @@ class MLServer:
             logger.info(f"ML client disconnected: {client_address}")
 
     async def periodic_model_update(self):
-        """Переобучение каждые 5 минут"""
+        """Переобучение каждые 20 минут"""
         while self.running:
-            await self.wait_virtual(300) # 5 минут
+            await self.wait_virtual(1200) # 5 минут
             try:
                 rows = self.db.get_training_data(limit=500)
                 if len(rows)<10:
@@ -137,7 +137,6 @@ class MLServer:
                     # Цель: устал если усталость >=6 и концентрация <=4
                     target = 1 if (fatigue_level >= 6 and concentration_level <= 4) else 0
                     y.append(target)
-                
                 if len(X)>0:
                     X = np.array(X)
                     y = np.array(y)

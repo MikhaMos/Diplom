@@ -38,6 +38,7 @@ class Database:
             fatigue_level integer CHECK(FATIGUE_LEVEL >= 0 AND FATIGUE_LEVEL <= 10),
             concentration_level integer CHECK(FATIGUE_LEVEL >= 0 AND FATIGUE_LEVEL <= 10),
             hour_of_day integer,
+            minute_of_hour integer,
             day_of_week integer
             )
         """)
@@ -70,8 +71,6 @@ class Database:
             CREATE TABLE IF NOT EXISTS ml_predictions(
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 timestamp DATETIME not null,
-                hour_of_day INTEGER,
-                day_of_week INTEGER,
                 features TEXT, 
                 prediction boolean, 
                 confidence REAL,
@@ -119,10 +118,10 @@ class Database:
         current_time = now()
 
         cursor.execute("""
-            INSERT INTO Survey_response (timestamp, fatigue_level, concentration_level, hour_of_day, day_of_week)
-            values(?,?,?,?,?)
+            INSERT INTO Survey_response (timestamp, fatigue_level, concentration_level, hour_of_day, minute_of_hour, day_of_week)
+            values(?,?,?,?,?,?)
         """,
-            (current_time, fatigue_level, concentration_level,current_time.hour, current_time.weekday()))
+            (current_time, fatigue_level, concentration_level,current_time.hour, current_time.minute, current_time.weekday()))
         self.connection.commit()
        
         self._update_survey_interval()
@@ -195,7 +194,7 @@ class Database:
     def get_training_data(self, limit: int= 1000):
         cursor = self.connection.cursor()
         cursor.execute("""
-            SELECT hour_of_day, day_of_week, fatigue_level, concentration_level 
+            SELECT timestamp, fatigue_level, concentration_level 
             FROM Survey_response
             ORDER BY timestamp DESC
             LIMIT ?
@@ -215,10 +214,10 @@ class Database:
         features_json = json.dumps(features)
         current_time = now()
         cursor.execute("""
-            INSERT INTO ml_predictions (timestamp, hour_of_day, day_of_week, features, prediction, confidence, threshold_used, adaptation_triggered)
-            values(?,?,?,?,?,?,?,?)
+            INSERT INTO ml_predictions (timestamp, features, prediction, confidence, threshold_used, adaptation_triggered)
+            values(?,?,?,?,?,?)
         """,
-            (current_time.strftime("%Y-%m-%d %H:%M:%S"), current_time.hour, current_time.weekday(), features_json, prediction, coffidence, threshold_used, adaptation_triggered))
+            (current_time.strftime("%Y-%m-%d %H:%M:%S"), features_json, prediction, coffidence, threshold_used, adaptation_triggered))
         self.connection.commit()
 
     def stop_survey_scheduler(self):

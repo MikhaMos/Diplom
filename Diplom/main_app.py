@@ -10,6 +10,10 @@ import json
 import asyncio
 import threading
 from datetime import timedelta
+import logging
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 from time_controller import now, time_controller
 
@@ -121,6 +125,7 @@ class MainWindow(QMainWindow):
         self.ui.SavePointButton.clicked.connect(self.save_positions)
         self.ui.pushButton_23.clicked.connect(lambda: self.log_message("Кнопка 2 нажата"))
         self.ui.ClearProgramButtons.clicked.connect(self.clear_points)
+        
 
         # Настройка вывода
         self.ui.Output.setReadOnly(True)
@@ -130,15 +135,15 @@ class MainWindow(QMainWindow):
         # Настройка управления роботом
         # Маппинг кнопок на суставы (индекс сустава, направление)
         self.joint_buttons = [
-            (self.ui.XForward, 'X', 1), (self.ui.XBackward, 'X', -1),
-            (self.ui.YForward, 'Y', 1), (self.ui.YBackward, 'Y', -1),
-            (self.ui.ZForward, 'Z', 1), (self.ui.ZBackward, 'Z', -1),
-            (self.ui.AForward, 'A', 1), (self.ui.ABackward, 'A', -1),
-            (self.ui.BForward, 'B', 1), (self.ui.BBackward, 'B', -1),
-            (self.ui.CForward, 'C', 1), (self.ui.CBackward, 'C', -1),
+            (self.ui.XForward, '1', 1), (self.ui.XBackward, '1', -1),
+            (self.ui.YForward, '2', 1), (self.ui.YBackward, '2', -1),
+            (self.ui.ZForward, '3', 1), (self.ui.ZBackward, '3', -1),
+            (self.ui.AForward, '4', 1), (self.ui.ABackward, '4', -1),
+            (self.ui.BForward, '5', 1), (self.ui.BBackward, '5', -1),
+            (self.ui.CForward, '6', 1), (self.ui.CBackward, '6', -1),
         ]
 
-        self.joint_map = ['Y', 'X', 'A', 'Z', 'B', 'C']
+        self.joint_map = ['1', '2', '3', '4', '5', '6']
 
         for button, joint_name, direction in self.joint_buttons:
             # Настраиваем автоповтор для непрерывного движения при удержании
@@ -360,9 +365,16 @@ class MainWindow(QMainWindow):
 
     @Slot()
     def show_survey_notification(self):
+        time_controller.pause()
+        time_controller.configure(
+                            time_controller.now(),
+                            acceleration=1
+                        )
+        time_controller.resume()
         #Показать уведомление об опросе
         QMessageBox().information(self, "Опрос", "Пожалуйста, ответьте на опрос!")
         self.ui.SurveyPageButton.click()
+        
         self.log_message("Show survey notification")
 
 
@@ -465,6 +477,7 @@ class MainWindow(QMainWindow):
         confidencce= prediction.get('confidence', 0.0)
 
         self.log_message(f"ML prediction: requires_adaptation={requires_adaptation}, confidence={confidencce}")
+        logger.info(f"ML prediction: requires_adaptation={requires_adaptation}, confidence={confidencce}")
 
         if requires_adaptation and not self.adaptive_mode:
             self.enable_adaptive_mode()

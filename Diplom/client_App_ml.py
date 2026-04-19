@@ -64,13 +64,15 @@ class MLClient(QObject):
             await self.websocket.send(json.dumps(message))
             response = await self.websocket.recv()
             result  = json.loads(response)
+            logger.info(f"Received prediction: {result}")
 
             if result.get('type') == 'prediction':
                 self.last_prediction = result
 
                 features = {
                     'hour': target_time.hour,
-                    'day_of_week': target_time.weekday
+                    'minute': target_time.minute,
+                    'day_of_week': target_time.weekday()
                 }
 
                 self.db.log_ml_prediction(
