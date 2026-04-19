@@ -102,7 +102,7 @@ class PybulletServer:
                     'command':'move_joint',
                     'success': success,
                     'message': log_msg,
-                    'timestamp': now()
+                    'timestamp': now().strftime("%d %H:%M:%S")
                 }
 
             elif command == 'reset_positions':
@@ -112,7 +112,7 @@ class PybulletServer:
                     'command':'reset_positions',
                     'success': True,
                     'message': 'Positions have been reset',
-                    'timestamp': now()
+                    'timestamp': now().strftime("%d %H:%M:%S")
                 }
             
             elif command == 'start_automatic_mode':
@@ -126,7 +126,7 @@ class PybulletServer:
                     'success': success,
                     'message': log_msg,
                     'point_count': len(points),
-                    'timestamp': now()
+                    'timestamp': now().strftime("%d %H:%M:%S")
                 }
             
             elif command == 'stop_automatic_mode':
@@ -137,7 +137,7 @@ class PybulletServer:
                     'command':'stop_automatic',
                     'success': success,
                     'message': log_msg,
-                    'timestamp': now()
+                    'timestamp': now().strftime("%d %H:%M:%S")
                 }
                 
             elif command == 'set_adaptive_mode':
@@ -149,7 +149,7 @@ class PybulletServer:
                     'success': True,
                     'message': 'Adaptive mode has been set',
                     'adaptive_mode': self.adaptive_mode,
-                    'timestamp': now()
+                    'timestamp': now().strftime("%d %H:%M:%S")
                 }
                 
                 logger.info(f"Adaptive mode: {self.adaptive_mode}, Speed mode: {self.speed_mode}")
@@ -159,7 +159,7 @@ class PybulletServer:
                 response={
                     'type': 'error',
                     'message': 'Unknown command',
-                    'timestamp': now()
+                    'timestamp': now().strftime("%d %H:%M:%S")
                 }
             
             await websocket.send(json.dumps(response))

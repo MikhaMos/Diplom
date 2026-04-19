@@ -1,5 +1,32 @@
+from PySide6.QtCore import QTimer, QSize, Qt
+from PySide6.QtGui import QGraphicsOpacityEffect, QColor
+from PySide6.QtWidgets import QPushButton, QLabel
+from time_controller import now
+import logging
+
+logger = logging.getLogger(__name__)
+
+
 
 class AdaptationManager:
+    """
+    Управляет плавной анимацией интерфейса с синхронизацией по виртуальному времени.
+    Длительность анимации: 20 минут виртуального времени (1200 секунд).
+    Анимирует: 
+      - размер кнопок (minimumSize)
+      - прозрачность второстепенных элементов
+      - цвет фона кнопок и панели статуса (интерполяция RGB)
+    """
+
+    ANIMATION_DURATION = 20*60 # # 20 минут в секундах виртуального времени
+
+    #Цвета для интерполяции
+    NORMAL_COLOR = QColor(44, 62, 80)   # #2c3e50
+    ADAPTIVE_COLOR = QColor(243, 156, 18) # #f39c12
+    NORMAL_BG_COLOR = QColor(240, 240, 240)  # фон главного окна #f0f0f0
+    ADAPTIVE_BG_COLOR = QColor(38, 50, 56)   # фон #263238
+
+
     def __init__(self):
         self.styles = {
             'normal': self._get_normal_style(),

@@ -63,7 +63,6 @@ class PyBulletClient(QObject):
                     self.positions_received.emit(positions)
                 else:
                     response=data.get('message')
-                    
                     self.command_response.emit(response)
         except Exception as e:
             logger.error(f"Error while monitoring positions: {e}")
