@@ -1,6 +1,6 @@
 from PySide6.QtCore import QTimer, QSize, Qt
 from PySide6.QtGui import  QColor
-from PySide6.QtWidgets import QPushButton, QLabel, QGraphicsOpacityEffect, QWidget
+from PySide6.QtWidgets import QPushButton, QLabel, QGraphicsOpacityEffect, QWidget, QMainWindow
 from time_controller import now, time_controller
 import logging
 
@@ -26,9 +26,9 @@ class AdaptationManager:
     NORMAL_BG_COLOR = QColor(245, 247, 250)   # #F5F7FA (светлый фон)
     ADAPTIVE_BG_COLOR = QColor(30, 30, 47)    # #1E1E2F (тёмный фон)
 
+    NORMAL_GROUP_BG = QColor(245, 247, 250)    # #FFFFFF
+    ADAPTIVE_GROUP_BG = QColor(255, 228, 181)  # #FFF0D4
     """
-    NORMAL_GROUP_BG = QColor(255, 255, 255)    # #FFFFFF
-    ADAPTIVE_GROUP_BG = QColor(42, 42, 59)     # #2A2A3B
     NORMAL_TEXT_COLOR = QColor(44, 62, 80)    # #2C3E50
     ADAPTIVE_TEXT_COLOR = QColor(233, 196, 106)  # #E9C46A (или белый)
     NORMAL_BUTTON_TEXT_COLOR = QColor(255, 255, 255)  # белый
@@ -103,7 +103,16 @@ class AdaptationManager:
     def _get_current_color(self, widget):
         if not isinstance(widget, QWidget):
             return self.NORMAL_COLOR
-        return self.current_colors.get(widget, self.NORMAL_COLOR)
+        if widget in self.current_colors:
+            return self.current_colors[widget]
+        # Для центрального виджета и групп возвращаем цвет фона нормального режима
+        if isinstance(widget, (QMainWindow, QWidget)) and widget.objectName() in ('centralwidget', 'MainWindow'):
+            return self.NORMAL_GROUP_BG
+        # Для кнопок – цвет кнопок нормального режима
+        if isinstance(widget, QPushButton):
+            return self.NORMAL_COLOR
+        # По умолчанию – цвет фона окна
+        return self.NORMAL_GROUP_BG
 
     def _set_widget_bg_color(self, widget, color):
         if not isinstance(widget, QWidget):
@@ -162,15 +171,16 @@ class AdaptationManager:
             target_color = self.NORMAL_BG_COLOR if target_state == 'normal' else self.ADAPTIVE_BG_COLOR
             self.start_values[(status_panel, 'bg_color')] = start_color
             self.target_values[(status_panel, 'bg_color')] = target_color
-        
+        """
         # 5 цвет фона центрального виджета(главное окно)
-        central = getattr(ui, 'centralwidget', None)
-        if central:
-            start_color = self._get_current_color(central)
-            target_color = self.NORMAL_GROUP_BG if target_state == 'normal' else self.ADAPTIVE_GROUP_BG
-            self.start_values[(central, 'bg_color')] = start_color
-            self.target_values[(central, 'bg_color')] = target_color
+        main_window = ui.window() if ui else None
         
+        if main_window:
+            start_color = self._get_current_color(main_window)
+            target_color = self.NORMAL_GROUP_BG if target_state == 'normal' else self.ADAPTIVE_GROUP_BG
+            self.start_values[(main_window, 'bg_color')] = start_color
+            self.target_values[(main_window, 'bg_color')] = target_color
+        """
         # 6 Цвет фона для всех QGroupBox (найти по имени или типу)
         for group_name in ['MoveBox', 'OutputCode', 'ParametrsButtons', 'StatusSurvey', 
                    'Question_1', 'HistorySurvey', 'Question_2', 'StatusPanel_2',
@@ -246,10 +256,12 @@ class AdaptationManager:
             logger.info(f"Animation finished to {self.target_state}")
 
     def _apply_final_style(self, ui, target_state):
-        if target_state == 'normal':
-            ui.setStyleSheet(self._get_normal_style())
-        elif target_state == 'adaptive':
-            ui.setStyleSheet(self._get_adaptive_style())
+        main_window = ui.window() if ui else None
+        if main_window:
+            if target_state == 'normal':
+                main_window.setStyleSheet(self._get_normal_style())
+            else:
+                main_window.setStyleSheet(self._get_adaptive_style())
 
     def apply_normal_style(self,ui, instant=False):
         if instant:
@@ -266,7 +278,9 @@ class AdaptationManager:
     def _apply_instant_normal(self, ui):
         """Мгновенно применить нормальный стиль (без анимации)."""
         self._stop_animation()
-        ui.setStyleSheet(self._get_normal_style())
+        main_window = ui.window() if ui else None
+        if main_window:
+            main_window.setStyleSheet(self._get_normal_style())
         for btn_name in self.all_animated_buttons:
             btn = getattr(ui, btn_name, None)
             if btn and isinstance(btn, QPushButton):
@@ -283,7 +297,10 @@ class AdaptationManager:
     def _apply_instant_adaptive(self, ui):
         """Мгновенно применить адаптивный стиль (без анимации)."""
         self._stop_animation()
-        ui.setStyleSheet(self._get_adaptive_style())
+        self._stop_animation()
+        main_window = ui.window() if ui else None
+        if main_window:
+            main_window.setStyleSheet(self._get_adaptive_style())
         for btn_name in self.all_animated_buttons:
             btn = getattr(ui, btn_name, None)
             if btn and isinstance(btn, QPushButton):
@@ -303,6 +320,7 @@ class AdaptationManager:
             QMainWindow {
                 background-color: #F5F7FA;
             }
+
 
             /* БАЗОВЫЕ КНОПКИ */
              QPushButton {
@@ -379,6 +397,7 @@ class AdaptationManager:
 
             /* ГРУППЫ И НАДПИСИ */
             QGroupBox {
+                background-color: #F5F7FA;
                 border: 0px solid #DEE2E6;
                 border-radius: 8px;
                 margin-top: 12px;
@@ -387,11 +406,13 @@ class AdaptationManager:
             QLabel {
                 color: #2C3E50;
                 font-size: 12px;
+                background-color: white;
             }
             #TimeLabel, #StatusPanel,
             #Label_adaptive_mode, #Label_ML_status, #Label_robot_status {
                 font-weight: bold;
                 color: #0077B6;
+                background-color: white;
             }
 
             /* ТЕКСТОВЫЕ ПОЛЯ */
@@ -486,6 +507,7 @@ class AdaptationManager:
 
             /* ГРУППЫ И НАДПИСИ */
             QGroupBox {
+                background-color: #1E1E2F;
                 border: 0px solid #E9C46A;
                 border-radius: 12px;
                 margin-top: 12px;
@@ -499,11 +521,13 @@ class AdaptationManager:
             #Label_adaptive_mode, #Label_ML_status, #Label_robot_status {
                 font-weight: bold;
                 color: #FF9F1C;
+                background-color: #1E1E2F
             }
 
             /* ТЕКСТОВЫЕ ПОЛЯ */
             QTextEdit, QPlainTextEdit {
-                background-color: #2A2A3B;
+            
+                background-color: #1E1E2F;
                 color: #E9C46A;
                 border: 1px solid #E9C46A;
                 border-radius: 8px;
