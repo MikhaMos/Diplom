@@ -135,7 +135,7 @@ class MLServer:
                     X.append(self.model.extract_features(timestamp))
                     fatigue_level = row['fatigue_level']
                     concentration_level = row['concentration_level']
-                    # Цель: устал если усталость >=6 и концентрация <=4
+                    # Цель: устал если усталость >=5 и концентрация <=4
                     target = 1 if (fatigue_level >= 5 and concentration_level <= 4) else 0
                     y.append(target)
                 if len(X)>0:

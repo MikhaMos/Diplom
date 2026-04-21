@@ -45,7 +45,7 @@ class KukaRobot:
                 'outer':4
             },
             'restricted': {
-                'inner':2.5, # 3 человек
+                'inner':4, # 3 человек
                 'outer':6
             }
         }
