@@ -142,17 +142,17 @@ class PybulletServer:
                 
             elif command == 'set_adaptive_mode':
                 self.adaptive_mode = data.get('enabled', False)
-                self.robot.set_adaptive_mode(self.adaptive_mode, 'reduced' if self.adaptive_mode else 'full')
+                self.robot.set_adaptive_mode(self.adaptive_mode, 'adaptive' if self.adaptive_mode else 'full')
                 response={
                     'type': 'command_response',
                     'command':'set_adaptive_mode',
                     'success': True,
-                    'message': 'Adaptive mode has been set',
+                    'message': 'Robot adaptive mode changed',
                     'adaptive_mode': self.adaptive_mode,
                     'timestamp': now().strftime("%d %H:%M:%S")
                 }
                 
-                logger.info(f"Adaptive mode: {self.adaptive_mode}, Speed mode: {self.speed_mode}")
+                logger.info(f"Adaptive mode: {self.adaptive_mode}, Speed mode: {'adaptive' if self.adaptive_mode else 'full'}")
                 
                 
             else:

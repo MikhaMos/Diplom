@@ -52,6 +52,7 @@ class MLServer:
                             'type': 'prediction',
                             'prediction': bool(prediction),
                             'confidence': float(confidence),
+                            'prob_class1': float(prob_class1),
                             'threshold_used': float(self.model.confidence_threshold),
                             'requires_adaptation': bool(prob_class1 > self.model.confidence_threshold),
                             'timestamp': timestamp.isoformat()
@@ -60,8 +61,8 @@ class MLServer:
                         #Логируем предсказание
                         self.db.log_command(
                             source="server_ml",
-                            command="predict",
-                            parameters= f"timestamp: {timestamp}, prediction: {prediction}, confidence: {confidence:.2f}",
+                            command="predict_result",
+                            parameters= f"timestamp_predict: {timestamp}, prediction: {prediction}, confidence: {confidence:.2f}, prob_class1: {prob_class1:.2f}",
                             success=True
                         )
 
@@ -135,7 +136,7 @@ class MLServer:
                     fatigue_level = row['fatigue_level']
                     concentration_level = row['concentration_level']
                     # Цель: устал если усталость >=6 и концентрация <=4
-                    target = 1 if (fatigue_level >= 6 and concentration_level <= 4) else 0
+                    target = 1 if (fatigue_level >= 5 and concentration_level <= 4) else 0
                     y.append(target)
                 if len(X)>0:
                     X = np.array(X)

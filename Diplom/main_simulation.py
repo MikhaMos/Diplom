@@ -45,20 +45,22 @@ class KukaRobot:
                 'outer':4
             },
             'restricted': {
-                'inner':4,
+                'inner':2.5, # 3 человек
                 'outer':6
             }
         }
         self.current_ssm_mode = 'normal'
         self.current_speed_mode = 'full'
 
-        self.robot_speeds = {
+        self.robot_speeds = { # рад/c
             'automatic':{
-                'full':0.8,  # Полная скорость (зеленая/синяя зона)
+                'full':1.2,  # Полная скорость (зеленая/синяя зона)
+                'adaptive':0.6, # Скорость при усталости
                 'reduced':0.48 # Пониженная скорость (желтая/фиолетовая зона)
             },
             'manual':{
-                'full':0.6,  # Полная скорость (зеленая/синяя зона)
+                'full':1,  # Полная скорость (зеленая/синяя зона)
+                'adaptive':0.4, # Скорость при усталости
                 'reduced':0.36 # Пониженная скорость (желтая/фиолетовая зона)
             }
         }
@@ -245,6 +247,7 @@ class KukaRobot:
             self.visualize_ssm_zones()
             logger.info(f"Workspace changed to {ssm_zone_type}")
             self.current_speed_mode = speed_mode_type
+            logger.info(f"Speed mode changed to {speed_mode_type}")
             return True
         return False
     
@@ -266,13 +269,15 @@ class KukaRobot:
 
         if distance < self.ssm_zones[self.current_ssm_mode]['outer'] and distance > self.ssm_zones[self.current_ssm_mode]['inner']:
             #человек внутри зеленой зоны - полная рабочая скорость
-            self.current_speed_mode = 'full'
+            if self.current_speed_mode != 'adaptive':
+                self.current_speed_mode = 'full'
         elif distance < self.ssm_zones[self.current_ssm_mode]['inner']:
             #человек внутри желтой зоны - половина рабочей скорости
             self.current_speed_mode = 'reduced'
         elif distance > self.ssm_zones[self.current_ssm_mode]['outer']:
             # человек вне зон
-            self.current_speed_mode = 'full'
+            if self.current_speed_mode != 'adaptive':
+                self.current_speed_mode = 'full'
         # else человек у робота
 
         self.automatic_move_speed = self.robot_speeds['automatic'][self.current_speed_mode]
@@ -299,7 +304,7 @@ class KukaRobot:
                 self.joint_indices[joint_index],
                 p.POSITION_CONTROL,
                 targetPosition=new_pos,
-                force=800,
+                force=800, # Для наглядности изменения скорости
                 maxVelocity=self.manual_move_speed
             )
             return True, f"Joint {joint_index} moved to {new_pos:.3f}"
