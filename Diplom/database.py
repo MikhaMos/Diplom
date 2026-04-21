@@ -74,6 +74,7 @@ class Database:
                 features TEXT, 
                 prediction boolean, 
                 confidence REAL,
+                prob_class1 REAL,
                 threshold_used REAL, 
                 adaptation_triggered boolean
                 )
@@ -207,17 +208,17 @@ class Database:
         return cursor.fetchone()[0]
     
     def log_ml_prediction(self, features:dict, prediction:bool,
-                        coffidence:float, threshold_used:float,
+                        coffidence:float,prob_class1:float, threshold_used:float,
                         adaptation_triggered:bool):
         """Логирует предсказание ML модели"""
         cursor = self.connection.cursor()
         features_json = json.dumps(features)
         current_time = now()
         cursor.execute("""
-            INSERT INTO ml_predictions (timestamp, features, prediction, confidence, threshold_used, adaptation_triggered)
-            values(?,?,?,?,?,?)
+            INSERT INTO ml_predictions (timestamp, features, prediction, confidence, prob_class1, threshold_used, adaptation_triggered)
+            values(?,?,?,?,?,?,?)
         """,
-            (current_time.strftime("%Y-%m-%d %H:%M:%S"), features_json, prediction, coffidence, threshold_used, adaptation_triggered))
+            (current_time.strftime("%Y-%m-%d %H:%M:%S"), features_json, prediction, coffidence, prob_class1,  threshold_used, adaptation_triggered))
         self.connection.commit()
 
     def stop_survey_scheduler(self):

@@ -27,6 +27,8 @@ class MainWindow(QMainWindow):
         super().__init__()
         self.setWindowTitle("Control panel")
         self.resize(880,670)
+        self.setMinimumSize(880,670)
+        self.setMaximumSize(880,670)
         
         current_dir = os.path.dirname(os.path.abspath(__file__))
         ui_file=os.path.join(current_dir,'Gui.ui')
@@ -54,6 +56,7 @@ class MainWindow(QMainWindow):
         self.ml_client.error_occurred.connect(self.on_ml_error)
 
         self.adaptation.apply_normal_style(self.ui, instant=True) #Стиль по умолчанию
+
         # Состояния
         self.adaptive_mode = False
         self.survey_answered = False
@@ -96,12 +99,18 @@ class MainWindow(QMainWindow):
         self.page_button_group.addButton(self.ui.SurveyPageButton)
         self.page_button_group.setExclusive(True)
 
+        # Выводы
+        self.ui.Output.document().setMaximumBlockCount(100)
+        self.ui.history_answer.document().setMaximumBlockCount(100)
+        self.ui.ML_prediction.document().setMaximumBlockCount(100)
+
         #Текста
         self.ui.StatusPanel.setText(f"Status: Инициализациия...")
         self.ui.Label_ML_status.setText(f" ML: не подключена")
         self.ui.Label_robot_status.setText(f" Robot: не подлючен")
         self.ui.Label_adaptive_mode.setText(f" Упрощенный режим: выкл")
         self.ui.label_moving.setText(f"❌")
+        self.ui.label_speed.setText(f"-")
         
         # Подключаем переключение страниц
         self.ui.ControlPageButton.clicked.connect(self.show_control_page)
@@ -376,7 +385,6 @@ class MainWindow(QMainWindow):
         QMessageBox().information(self, "Опрос", "Пожалуйста, ответьте на опрос!")
         self.ui.SurveyPageButton.click()
         """
-        
         self.log_message("Show survey notification")
 
 
@@ -398,6 +406,7 @@ class MainWindow(QMainWindow):
         # Обновляем позиции робота
         self.current_frame_pos_robot=positions.get('FramePositions')
         self.current_orientation_robot=positions.get('End_effector_Orientation')
+        current_speed_robot=positions.get('speed_factor')
         text=""
         self.current_joint_positions=positions.get('JointPositions')
         for i, pos in enumerate(self.current_joint_positions):
@@ -409,6 +418,7 @@ class MainWindow(QMainWindow):
         else:
             self.ui.label_moving.setText(f"❌")
         self.last_positions= self.current_joint_positions
+        self.ui.label_speed.setText(f" Speed:{current_speed_robot} рад/c")
         
 
     @Slot()
@@ -477,9 +487,9 @@ class MainWindow(QMainWindow):
     def on_ml_prediction(self, prediction):
         requires_adaptation = prediction.get('requires_adaptation', False)
         confidencce= prediction.get('confidence', 0.0)
-
-        self.log_message(f"ML prediction: requires_adaptation={requires_adaptation}, confidence={confidencce}")
-        logger.info(f"ML prediction: requires_adaptation={requires_adaptation}, confidence={confidencce}")
+        timestamp = prediction.get('timestamp')
+        self.ui.ML_prediction.append(f"ML prediction: timestamp={timestamp[11:16]}, requires_adaptation={requires_adaptation}, confidence={confidencce:.2f}")
+        logger.info(f"ML prediction: requires_adaptation={requires_adaptation}, confidence={confidencce:.2f}")
 
         if requires_adaptation and not self.adaptive_mode:
             self.enable_adaptive_mode()
@@ -500,7 +510,7 @@ class MainWindow(QMainWindow):
     def enable_adaptive_mode(self):
         self.adaptive_mode = True
         self.log_message("Adaptive mode enabled")
-        self.ui.Label_adaptive_mode.setText(f" Адаптивный режим вкл")
+        self.ui.Label_adaptive_mode.setText(f" Адаптивный режим ВКЛ")
 
         self.adaptation.apply_adaptive_style(self.ui)
 
@@ -511,7 +521,7 @@ class MainWindow(QMainWindow):
     def disable_adaptive_mode(self):
         self.adaptive_mode = False
         self.log_message("Adaptive mode disabled")
-        self.ui.Label_adaptive_mode.setText(f" Адаптивный режим выкл")
+        self.ui.Label_adaptive_mode.setText(f" Адаптивный режим ВЫКЛ")
         self.adaptation.apply_normal_style(self.ui)
         #Отправляем команду на возврат к обычному режиму робота
         if hasattr(self, 'robot_client') and self.robot_client.running:
@@ -523,7 +533,7 @@ class MainWindow(QMainWindow):
         current_time = now().strftime( "%H:%M:%S")
         self.ui.TimeLabel.setText(f"{current_time}")
         self.ui.DateLabel.setText(f"{now().strftime('%d.%m.%Y')}")
-        self.ui.last_survey.setText(f"До следующего опроса: {self.next_survey_time - now()}")
+        self.ui.last_survey.setText(f"До следующего опроса: {str(self.next_survey_time - now())[:-6]}")
 
         if now() >= self.next_survey_time:
             self.show_survey_notification()

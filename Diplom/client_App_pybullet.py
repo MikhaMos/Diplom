@@ -59,6 +59,7 @@ class PyBulletClient(QObject):
                         'JointPositions':data.get('JointPositions',), 
                         'FramePositions':data.get('FramePositions'),
                         'End_effector_Orientation':data.get('End_effector_Orientation'),
+                        'speed_factor':data.get('speed_factor'),
                         }
                     self.positions_received.emit(positions)
                 else:

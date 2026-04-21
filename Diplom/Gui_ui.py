@@ -434,6 +434,12 @@ class Ui_MainWindow(object):
 
         self.horizontalLayout_15.addWidget(self.radioButton_20)
 
+        self.ML_prediction = QTextEdit(self.SurvayPage)
+        self.ML_prediction.setObjectName(u"ML_prediction")
+        self.ML_prediction.setGeometry(QRect(350, 408, 171, 131))
+        self.ML_prediction.setReadOnly(True)
+        self.ML_prediction.setOverwriteMode(False)
+        self.ML_prediction.setTabStopDistance(0.000000000000000)
         self.stackedWidget.addWidget(self.SurvayPage)
         self.StatusPanel = QLabel(self.centralwidget)
         self.StatusPanel.setObjectName(u"StatusPanel")
@@ -488,6 +494,7 @@ class Ui_MainWindow(object):
         self.Output.setObjectName(u"Output")
         self.Output.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOn)
         self.Output.setReadOnly(True)
+        self.Output.setTabStopWidth(0)
 
         self.verticalLayout_11.addWidget(self.Output)
 
@@ -568,10 +575,10 @@ class Ui_MainWindow(object):
 
         self.horizontalLayout_14.addWidget(self.label_moving)
 
-        self.label_6 = QLabel(self.horizontalLayoutWidget_8)
-        self.label_6.setObjectName(u"label_6")
+        self.label_speed = QLabel(self.horizontalLayoutWidget_8)
+        self.label_speed.setObjectName(u"label_speed")
 
-        self.horizontalLayout_14.addWidget(self.label_6)
+        self.horizontalLayout_14.addWidget(self.label_speed)
 
         self.label_7 = QLabel(self.horizontalLayoutWidget_8)
         self.label_7.setObjectName(u"label_7")
@@ -669,7 +676,7 @@ class Ui_MainWindow(object):
         self.AutomaticModeButton.setText(QCoreApplication.translate("MainWindow", u"\u0410\u0432\u0442\u043e", None))
         self.StatusRobot.setTitle("")
         self.label_moving.setText(QCoreApplication.translate("MainWindow", u"TextLabel", None))
-        self.label_6.setText(QCoreApplication.translate("MainWindow", u"TextLabel", None))
+        self.label_speed.setText(QCoreApplication.translate("MainWindow", u"TextLabel", None))
         self.label_7.setText(QCoreApplication.translate("MainWindow", u"TextLabel", None))
     # retranslateUi
 

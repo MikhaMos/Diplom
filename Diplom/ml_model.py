@@ -16,7 +16,7 @@ class FatiguePredictor:
         self.model_path = model_path
         self.model: Optional[LogisticRegression] = None
         self.scaler = StandardScaler()
-        self.confidence_threshold = 0.7 # Порог уверенности для адаптации
+        self.confidence_threshold = 0.55 # Порог уверенности для адаптации
 
         if os.path.exists(model_path):
             self.load_model()
@@ -83,7 +83,7 @@ class FatiguePredictor:
         prob_class1 = self.model.predict_proba(features_scaled)[0,1]
         prob_class0 = 1 - prob_class1
         prediction =  prob_class1 > self.confidence_threshold
-        # Уверенность в принятом решении
+        # Уверенность_prediction в принятом решении
         if prediction:
             confidence = prob_class1  # уверен, что устал
         else:

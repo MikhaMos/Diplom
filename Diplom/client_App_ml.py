@@ -79,7 +79,8 @@ class MLClient(QObject):
                                     features=features,
                                     prediction=result.get('prediction'),
                                     coffidence=result.get('confidence'),
-                                    threshold_used=result.get('threshold_used', 0.65),
+                                    prob_class1=result.get('prob_class1'),
+                                    threshold_used=result.get('threshold_used', 0.55),
                                     adaptation_triggered=result.get('requires_adaptation',False)
                                     )
                 
