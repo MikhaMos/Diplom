@@ -21,13 +21,13 @@ class AdaptationManager:
     ANIMATION_DURATION = 20*60 # # 20 минут в секундах виртуального времени
 
     # Цвета для анимации
-    NORMAL_COLOR = QColor(0, 119, 182)        # #0077B6 (синий)
+    NORMAL_COLOR = QColor(31, 176, 255)        # #0077B6 (синий)
     ADAPTIVE_COLOR = QColor(255, 159, 28)     # #FF9F1C (оранжевый)
     NORMAL_BG_COLOR = QColor(245, 247, 250)   # #F5F7FA (светлый фон)
     ADAPTIVE_BG_COLOR = QColor(30, 30, 47)    # #1E1E2F (тёмный фон)
 
     NORMAL_GROUP_BG = QColor(245, 247, 250)    # #FFFFFF
-    ADAPTIVE_GROUP_BG = QColor(255, 228, 181)  # #FFF0D4
+    ADAPTIVE_GROUP_BG = QColor(255, 200, 148)  ##ffc894
     """
     NORMAL_TEXT_COLOR = QColor(44, 62, 80)    # #2C3E50
     ADAPTIVE_TEXT_COLOR = QColor(233, 196, 106)  # #E9C46A (или белый)
@@ -63,8 +63,12 @@ class AdaptationManager:
 
          # Важные функциональные кнопки (Home, SavePoint, ClearProgram)
         self.functional_buttons = [
-            'HomeButton', 'SavePointButton', 'ClearProgramButtons', 'pushButton_23'
+            'HomeButton', 'SavePointButton', 'ClearProgramButtons', 'pushButton_23', 
         ]
+
+        self.controlPage_buttons = [
+            'ControlPageButton','SurveyPageButton' 
+            ]
 
         self.all_animated_buttons = self.main_control_buttons + self.functional_buttons
 
@@ -155,7 +159,7 @@ class AdaptationManager:
                 self.target_values[(btn, 'opacity')] = target_opacity
         
         # 3 Цвет фона кнопок
-        for btn_name in self.all_animated_buttons:
+        for btn_name in self.all_animated_buttons+self.controlPage_buttons:
             btn = getattr(ui, btn_name, None)
             if btn is None: continue
             if btn:
@@ -321,21 +325,21 @@ class AdaptationManager:
                 background-color: #F5F7FA;
             }
 
-
             /* БАЗОВЫЕ КНОПКИ */
              QPushButton {
-            background-color: #0077B6;
-            color: white !important;
-            border: none;
-            border-radius: 4px;
-            font-size: 12px;
-            font-weight: 500;
-            padding: 6px 12px;
+                background-color: #0077B6;
+                color: white !important;
+                border: none;
+                border-radius: 4px;
+                font-size: 12px;
+                font-weight: 500;
+                padding: 6px 12px;
             }
             /* ВТОРОСТЕПЕННЫЕ КНОПКИ */
             #HomeButton, #SavePointButton, #ClearProgramButtons {
                 background-color: #0077B6;
                 color: white !important;
+                border-radius: 4px;
             }
             /* ПАНЕЛЬ УПРАВЛЕНИЯ ДВИЖЕНИЕМ */
             #XForward, #XBackward, #YForward, #YBackward,
@@ -343,6 +347,7 @@ class AdaptationManager:
             #BForward, #BBackward, #CForward, #CBackward {
                 background-color: #0077B6;
                 color: white !important;
+                border-radius: 4px;
 
             }
             /* КНОПКИ ПЕРЕКЛЮЧЕНИЯ СТРАНИЦ */
@@ -350,6 +355,7 @@ class AdaptationManager:
             #pushButton_5, #pushButton_6, #pushButton_7, #pushButton_8 {
                 background-color: #d1d4d7;
                 color: #2C3E50;
+                border-radius: 4px;
             }
             #ControlPageButton:checked, #SurveyPageButton:checked {
                 background-color: #0077B6;
@@ -453,6 +459,7 @@ class AdaptationManager:
             #HomeButton, #SavePointButton, #ClearProgramButtons {
                 background-color: #E76F51;
                 color: white;
+                border-radius: 20px;
             }
 
             /* ПАНЕЛЬ УПРАВЛЕНИЯ ДВИЖЕНИЕМ (увеличенные кнопки) */
@@ -460,7 +467,9 @@ class AdaptationManager:
             #ZForward, #ZBackward, #AForward, #ABackward,
             #BForward, #BBackward, #CForward, #CBackward {
                 background-color: #FF9F1C;
+                color: white;
                 font-size: 14px;
+                border-radius: 20px;
             }
 
             /* КНОПКИ ПЕРЕКЛЮЧЕНИЯ СТРАНИЦ */
@@ -468,6 +477,7 @@ class AdaptationManager:
             #pushButton_5, #pushButton_6, #pushButton_7, #pushButton_8 {
                 background-color: #2A9D8F;
                 color: white;
+                border-radius: 20px;
             }
             #ControlPageButton:checked, #SurveyPageButton:checked {
                 background-color: #E9C46A;

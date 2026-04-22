@@ -580,10 +580,10 @@ class Ui_MainWindow(object):
 
         self.horizontalLayout_14.addWidget(self.label_speed)
 
-        self.label_7 = QLabel(self.horizontalLayoutWidget_8)
-        self.label_7.setObjectName(u"label_7")
+        self.DayLabel = QLabel(self.horizontalLayoutWidget_8)
+        self.DayLabel.setObjectName(u"DayLabel")
 
-        self.horizontalLayout_14.addWidget(self.label_7)
+        self.horizontalLayout_14.addWidget(self.DayLabel)
 
         MainWindow.setCentralWidget(self.centralwidget)
         self.menubar = QMenuBar(MainWindow)
@@ -677,6 +677,6 @@ class Ui_MainWindow(object):
         self.StatusRobot.setTitle("")
         self.label_moving.setText(QCoreApplication.translate("MainWindow", u"TextLabel", None))
         self.label_speed.setText(QCoreApplication.translate("MainWindow", u"TextLabel", None))
-        self.label_7.setText(QCoreApplication.translate("MainWindow", u"TextLabel", None))
+        self.DayLabel.setText(QCoreApplication.translate("MainWindow", u"TextLabel", None))
     # retranslateUi
 

@@ -1,6 +1,6 @@
 import numpy as np
 import pandas as pd
-from scipy.integrate import odeint
+from scipy.integrate import solve_ivp
 from datetime import datetime, timedelta
 
 np.random.seed(100)
@@ -9,12 +9,12 @@ np.random.default_rng(seed=42)
 # ------------------------------------------------------------
 # Фиксированные индивидуальные параметры человека (из статьи)
 a_tilda = [0.0015, 0.0010, 0.045]   # ã₁, ã₂, ã₃
-b_tilda = [0.480, 0.023, 3]    # b̃₁, b̃₂, b̃₃
-k_tilda = [0.65, 0.420, 0.25]      # k̃₁, k̃₂, k̃₃
-gamma_tilda = [0.025, 0.050, 0.15] # γ̃₁, γ̃₂, γ̃₃
+b_tilda = [0.480, 0.033, 2.503]    # b̃₁, b̃₂, b̃₃
+k_tilda = [0.65, 0.480, 0.25]      # k̃₁, k̃₂, k̃₃
+gamma_tilda = [0.025, 0.050, 0.02] # γ̃₁, γ̃₂, γ̃₃
 h_tilda = 0.89                     # h̃₁
 d = [0.0002, 0.0007, 0.07]         # d₁, d₂, d₃
-c = [0.0015, 0.0009, 0.010]        # c₁, c₂, c₃
+c = [0.0015, 0.001, 0.010]        # c₁, c₂, c₃
 
 # Коэффициенты чувствительности для S(t) (можно настраивать)
 kW = 0.4   # чувствительность к снижению работоспособности
@@ -32,12 +32,12 @@ init_conditions = {
     1: (0.20, 0.10, 0.08),   # вторник
     2: (0.15, 0.12, 0.07),   # среда
     3: (0.10, 0.17, 0.09),   # четверг
-    4: (0.20, 0.15, 0.12)    # пятница
+    4: (0.10, 0.15, 0.12)    # пятница
 }
 
 # ------------------------------------------------------------
 # Функция правой части системы (1)
-def system(y, t, params):
+def system(t, y, params):
     W, F, E = y
     # Уровень автономности S(t) по формуле (3)
     S = S0 + kW * (1 - W) + kF * F + kE * E
@@ -59,7 +59,7 @@ def system(y, t, params):
     return [dWdt, dFdt, dEdt]
 
 # ------------------------------------------------------------
-def generate_survey_data(start_date, num_weeks=4):
+def generate_survey_data(start_date, num_weeks):
     """
     Генерирует опросы для num_weeks недель (пн–пт) и сохраняет в CSV.
     """
@@ -72,7 +72,7 @@ def generate_survey_data(start_date, num_weeks=4):
     # Временная сетка: с 9:00 до 19:00 с шагом 20 минут
     t_start = 9.0
     t_end = 19.0
-    dt_hours = 20 / 60.0   # 20 минут = 1/12 часа
+    dt_hours = 20/ 60.0   # 20 минут = 1/12 часа
     t_eval = np.arange(t_start, t_end + dt_hours, dt_hours)
     
     
@@ -84,8 +84,9 @@ def generate_survey_data(start_date, num_weeks=4):
             y0 = init_conditions[day_of_week]
             
             # Интегрируем систему
-            sol = odeint(system, y0, t_eval, args=(None,))
-            W_vals, F_vals, E_vals = sol[:,0], sol[:,1], sol[:,2]
+            sol = solve_ivp(system, t_span=(t_eval[0], t_eval[-1]), y0=y0, method='RK45',
+                t_eval=t_eval, args=(None,), rtol=1e-6, atol=1e-8)
+            W_vals, F_vals, E_vals = sol.y[0], sol.y[1], sol.y[2]
             
             # Для каждого момента времени сохраняем опрос
             for i, t in enumerate(t_eval):
@@ -93,8 +94,8 @@ def generate_survey_data(start_date, num_weeks=4):
                 fatigue_raw = 1 + 9 * F_vals[i]
                 concentration_raw = 10 - 9 * E_vals[i]
                 # Добавляем шум (нормальный, σ=0.4)
-                fatigue_noisy = fatigue_raw + np.random.normal(0, 0.4)
-                concentration_noisy = concentration_raw + np.random.normal(0, 0.4)
+                fatigue_noisy = fatigue_raw + np.random.normal(-0.5, 0.4)
+                concentration_noisy = concentration_raw + np.random.normal(-0.5, 0.4)
                 fatigue = int(np.clip(np.round(fatigue_noisy), 1, 10))
                 concentration = int(np.clip(np.round(concentration_noisy), 1, 10))
                 
@@ -212,6 +213,6 @@ def plot_survey_data(csv_path='survey_response.csv',week_offset = 0):
 
 # ------------------------------------------------------------
 if __name__ == "__main__":
-    start = datetime(2026, 3, 30)   # 1 апреля 2026
-    generate_survey_data(start, num_weeks=4)
+    start = datetime(2026, 3, 2)   # 1 апреля 2026
+    generate_survey_data(start, num_weeks=6)
     plot_survey_data('survey_response.csv')

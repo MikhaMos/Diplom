@@ -119,9 +119,9 @@ class MLServer:
     async def periodic_model_update(self):
         """Переобучение каждые 20 минут"""
         while self.running:
-            await self.wait_virtual(1200) # 5 минут
+            await self.wait_virtual(1200) # 20 минут
             try:
-                rows = self.db.get_training_data(limit=500)
+                rows = self.db.get_training_data(limit=10000)
                 if len(rows)<10:
                     continue
                 X,y = [],[]
