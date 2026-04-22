@@ -16,7 +16,7 @@ class FatiguePredictor:
         self.model_path = model_path
         self.model: Optional[LogisticRegression] = None
         self.scaler = StandardScaler()
-        self.confidence_threshold = 0.55 # Порог уверенности для адаптации
+        self.confidence_threshold = 0.68 # Порог уверенности для адаптации
 
         if os.path.exists(model_path):
             self.load_model()
@@ -64,7 +64,7 @@ class FatiguePredictor:
         # Обучаем scaler и модель
         self.scaler.fit(X_synth)
         X_scaled = self.scaler.fit_transform(X_synth)
-        self.model = LogisticRegression()
+        self.model = LogisticRegression(C=1)
         self.model.fit(X_scaled, y_synth)
         self.save_model()
         logger.info("Initial model created with synthetic data")
@@ -98,9 +98,33 @@ class FatiguePredictor:
         self.scaler.fit(X)
         X_scaled = self.scaler.transform(X)
         self.model.fit(X_scaled, y)
-        self.save_model()
-
         accuracy = self.model.score(X_scaled, y)
+        self.save_model()
+       
+        from sklearn.model_selection import train_test_split
+        from sklearn.metrics import accuracy_score
+
+        X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.3, random_state=0, stratify=y)
+
+        from sklearn.preprocessing import StandardScaler
+
+        sc = StandardScaler()
+
+        sc.fit(X_train)
+
+        X_train_std = sc.transform(X_train)
+        X_test_std = sc.transform(X_test)
+
+
+        lr =LogisticRegression(C=1)
+        lr.fit(X_train_std, y_train)
+        y_pred_lr = lr.predict(X_test_std)
+
+        print('\nЧисло ошибочно классифицированных образов: ', str((y_test != y_pred_lr).sum()))
+        print("\nсреднее количество ошибочных классификаций на тренировочных данных:","{:.4f}".format(np.mean(y_train != lr.predict(X_train_std))))
+        print("\nсреднее количество ошибочных классификаций на тестовых данных:", "{:.4f}".format(np.mean(y_test != y_pred_lr)))
+        print('\nВерность: %.2f' % accuracy_score(y_test, y_pred_lr))
+        
         logger.info(f"Model accuracy: {accuracy}")
         return accuracy
     

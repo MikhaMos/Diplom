@@ -1304,7 +1304,7 @@ p, li { white-space: pre-wrap; }
        </widget>
       </item>
       <item>
-       <widget class="QLabel" name="label_7">
+       <widget class="QLabel" name="DayLabel">
         <property name="text">
          <string>TextLabel</string>
         </property>

@@ -47,7 +47,7 @@ def load_data_from_db(db, limit=1000):
 
 # ----------------------------------------------------------------------
 # 3. График динамики вероятности по времени (хронология)
-def plot_prediction_over_time(db, threshold=0.55):
+def plot_prediction_over_time(db, threshold=0.68):
     import sqlite3
     import pandas as pd
     import numpy as np
@@ -83,7 +83,7 @@ def plot_prediction_over_time(db, threshold=0.55):
             ax.set_ylabel('Вероятность усталости')
             ax.set_ylim(0, 1)
             ax.set_xlim(9, 19)
-            ax.axhline(y=0.55, color='blue', linestyle='--', linewidth=1.5, label='Порог 0.55')
+            ax.axhline(y=0.68, color='blue', linestyle='--', linewidth=1.5, label='Порог 0.68')
             ax.grid(True, linestyle='--', alpha=0.6)
             ax.legend(fontsize='small')
         else:
@@ -99,7 +99,7 @@ def plot_prediction_over_time(db, threshold=0.55):
     avg_data['prob_smooth'] = avg_data['prob_class1'].rolling(window=3, center=True).mean()
     ax_avg.plot(avg_data['time_bin'], avg_data['prob_class1'], 'o', alpha=0.4, markersize=3, label='Средняя по интервалам')
     ax_avg.plot(avg_data['time_bin'], avg_data['prob_smooth'], 'g-', linewidth=2, label='Сглаженная средняя')
-    ax_avg.axhline(y=0.55, color='red', linestyle='--', linewidth=1.5, label='Порог 0.55')
+    ax_avg.axhline(y=0.68, color='red', linestyle='--', linewidth=1.5, label='Порог 0.68')
     ax_avg.set_title('Средняя за смену (все дни)')
     ax_avg.set_xlabel('Время суток (часы)')
     ax_avg.set_ylabel('Вероятность усталости')
@@ -125,7 +125,7 @@ def plot_hourly_avg_probability(timestamps, y_prob):
     plt.plot(hourly_avg['hour'], hourly_avg['probability'],
              marker='o', linestyle='-', linewidth=2, markersize=6,
              label='Средняя вероятность усталости')
-    plt.axhline(y=0.7, color='r', linestyle='--', label='Порог адаптации (0.7)')
+    plt.axhline(y=0.68, color='r', linestyle='--', label='Порог адаптации (0.68)')
     plt.xlabel('Часы рабочей смены (9:00 - 19:00)')
     plt.ylabel('Вероятность усталости')
     plt.title('Динамика средней вероятности усталости оператора в течение дня')
@@ -222,6 +222,54 @@ def plot_fatigue_trend(db):
 
     plt.tight_layout()
 
+def plot_fatigue_concentration_decision(db):
+    """
+    Строит границу решения логистической регрессии,
+    обученной на двух признаках: fatigue_level и concentration_level.
+    """
+    import sqlite3
+    import numpy as np
+    import matplotlib.pyplot as plt
+    from sklearn.linear_model import LogisticRegression
+    from sklearn.preprocessing import StandardScaler
+
+    # Загружаем данные из БД
+    conn = sqlite3.connect(db.db)
+    query = """
+        SELECT fatigue_level, concentration_level
+        FROM survey_response
+        WHERE fatigue_level IS NOT NULL AND concentration_level IS NOT NULL
+    """
+    data = pd.read_sql_query(query, conn)
+    conn.close()
+    if data.empty:
+        print("Нет данных для графика усталость vs концентрация.")
+        return
+
+    # Формируем признаки X (fatigue, concentration) и целевую переменную y
+    X_fc = data[['fatigue_level', 'concentration_level']].values
+    # Цель: устал если fatigue >= 5 и concentration <= 4 (как в вашей модели)
+    y_fc = ((data['fatigue_level'] >= 5) & (data['concentration_level'] <= 4)).astype(int)
+
+    # Масштабируем признаки
+    scaler_fc = StandardScaler()
+    X_scaled_fc = scaler_fc.fit_transform(X_fc)
+
+    # Обучаем логистическую регрессию
+    model_fc = LogisticRegression(C=1)
+    model_fc.fit(X_scaled_fc, y_fc)
+
+    # Строим границу решения
+    plt.figure(4,figsize=(8, 6))
+    # Используем уже имеющуюся функцию plot_decision_regions
+    plot_decision_regions(X_scaled_fc, y_fc, model_fc, resolution=0.05)
+    plt.xlabel('Усталость (fatigue_level, масштабированная)')
+    plt.ylabel('Концентрация (concentration_level, масштабированная)')
+    plt.title('Граница решения: усталость vs концентрация')
+    plt.legend()
+    plt.tight_layout()
+    plt.show()
+
 # ----------------------------------------------------------------------
 # 6. Вспомогательная функция для границы решения (оставлена как в оригинале)
 def plot_decision_regions(X, y, classifier, resolution=0.02):
@@ -259,7 +307,7 @@ def main():
     plot_prediction_over_time(db)
 
     # График 2: средняя вероятность по часам
-    plot_hourly_avg_probability(timestamps, y_prob)
+    #plot_hourly_avg_probability(timestamps, y_prob)
 
     # График 3: работоспособность (fatigue trend)
     plot_fatigue_trend(db)
@@ -275,21 +323,9 @@ def main():
     plt.figure(3)
     disp.plot(ax=plt.gca())
     plt.title('Матрица ошибок')
-
-    # 5. График 3: граница решения для двух признаков (hour_sin, hours_since_start)
-    X_two = X[:, [0, 5]]
-    scaler_two = StandardScaler()
-    X_two_scaled = scaler_two.fit_transform(X_two)
-    model_two = LogisticRegression()
-    model_two.fit(X_two_scaled, y)
-    plt.figure(4)
-    plot_decision_regions(X_two_scaled, y, model_two)
-    plt.xlabel('hour_sin (масштабированный)')
-    plt.ylabel('hours_since_start (масштабированный)')
-    plt.title('Граница решения (hour_sin vs hours_since_start)')
-    plt.legend()
     """
-    plt.show()
+    # 5. График 3: граница решения для двух признаков (hour_sin, hours_since_start)
+    #plot_fatigue_concentration_decision(db)
 
 if __name__ == "__main__":
     main()

@@ -532,6 +532,8 @@ class MainWindow(QMainWindow):
     def update_time_and_check_events(self):
         current_time = now().strftime( "%H:%M:%S")
         self.ui.TimeLabel.setText(f"{current_time}")
+        day_names = ['Понедельник', 'Вторник', 'Среда', 'Четверг', 'Пятница', 'Суббота', 'Воскресенье']
+        self.ui.DayLabel.setText(f"{day_names[now().weekday()]}")
         self.ui.DateLabel.setText(f"{now().strftime('%d.%m.%Y')}")
         self.ui.last_survey.setText(f"До следующего опроса: {str(self.next_survey_time - now())[:-6]}")
 
