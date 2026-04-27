@@ -18,8 +18,9 @@ def load_model(model_path="fatigue_model.pkl"):
     return data['model'], data['scaler']
 
 # ----------------------------------------------------------------------
+"""
 # 2. Загрузка данных из БД и формирование X, y, timestamps
-def load_data_from_db(db, limit=1000):
+def load_data_from_db(db, limit=10000):
     rows = db.get_training_data(limit=limit)
     if not rows:
         return None, None, None
@@ -44,7 +45,7 @@ def load_data_from_db(db, limit=1000):
         y_list.append(target)
         timestamps.append(dt)
     return np.array(X_list), np.array(y_list), timestamps
-
+"""
 # ----------------------------------------------------------------------
 # 3. График динамики вероятности по времени (хронология)
 def plot_prediction_over_time(db, threshold=0.68):
@@ -294,14 +295,17 @@ def plot_decision_regions(X, y, classifier, resolution=0.02):
 # ----------------------------------------------------------------------
 def main():
     db = Database()
-    X, y, timestamps = load_data_from_db(db, limit=1000)
+    """
+    X, y, timestamps = load_data_from_db(db, limit=10000)
     if X is None:
         print("Нет данных в БД. Сначала соберите опросы.")
         return
+    
 
     model, scaler = load_model()
     X_scaled = scaler.transform(X)
     y_prob = model.predict_proba(X_scaled)[:, 1]
+    """
 
     # График 1: динамика вероятности по времени
     plot_prediction_over_time(db)
@@ -326,6 +330,7 @@ def main():
     """
     # 5. График 3: граница решения для двух признаков (hour_sin, hours_since_start)
     #plot_fatigue_concentration_decision(db)
+    plt.show()
 
 if __name__ == "__main__":
     main()

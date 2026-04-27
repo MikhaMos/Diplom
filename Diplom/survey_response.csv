@@ -1,4 +1,4 @@
-id,timestamp,fatigue_level,concentration_level,hour_of_day,minute_of_day,day_of_week
+id,timestamp,fatigue_level,concentration_level,hour_of_day,minute_of_hour,day_of_week
 1,2026-03-02 09:00:00,1,9,9,0,0
 2,2026-03-02 09:20:00,2,8,9,20,0
 3,2026-03-02 09:40:00,2,8,9,40,0

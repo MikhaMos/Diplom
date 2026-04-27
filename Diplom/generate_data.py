@@ -108,6 +108,7 @@ def generate_survey_data(start_date, num_weeks):
                 # Пропускаем время после 19:00
                 if hour >= 19 and minute > 0:
                     continue
+                
                 timestamp = datetime(date.year, date.month, date.day, hour, minute, 0)
                 
                 data_rows.append({
@@ -115,7 +116,7 @@ def generate_survey_data(start_date, num_weeks):
                     'fatigue_level': fatigue,
                     'concentration_level': concentration,
                     'hour_of_day': timestamp.hour,
-                    'minute_of_day': timestamp.minute,
+                    'minute_of_hour': timestamp.minute,
                     'day_of_week': day_of_week
                 })
         # Переход к следующей неделе

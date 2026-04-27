@@ -35,8 +35,8 @@ class Database:
             CREATE TABLE IF NOT EXISTS survey_response (
             id integer PRIMARY KEY AUTOINCREMENT,
             timestamp DATETIME,
-            fatigue_level integer CHECK(FATIGUE_LEVEL >= 0 AND FATIGUE_LEVEL <= 10),
-            concentration_level integer CHECK(FATIGUE_LEVEL >= 0 AND FATIGUE_LEVEL <= 10),
+            fatigue_level integer CHECK(fatigue_level >= 0 AND fatigue_level <= 10),
+            concentration_level integer CHECK(concentration_level >= 0 AND concentration_level <= 10),
             hour_of_day integer,
             minute_of_hour integer,
             day_of_week integer
@@ -122,7 +122,7 @@ class Database:
             INSERT INTO Survey_response (timestamp, fatigue_level, concentration_level, hour_of_day, minute_of_hour, day_of_week)
             values(?,?,?,?,?,?)
         """,
-            (current_time, fatigue_level, concentration_level,current_time.hour, current_time.minute, current_time.weekday()))
+            (current_time.strftime("%Y-%m-%d %H:%M:%S"), fatigue_level, concentration_level,current_time.hour, current_time.minute, current_time.weekday()))
         self.connection.commit()
        
         self._update_survey_interval()

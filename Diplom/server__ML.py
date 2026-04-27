@@ -141,8 +141,14 @@ class MLServer:
                 if len(X)>0:
                     X = np.array(X)
                     y = np.array(y)
-                    self.model.train(X, y)
+                    accuracy = self.model.train(X, y)
                     logger.info('Predictor model updated complete')
+                    self.db.log_command(
+                        source="server_ml",
+                        command="periodic_model_update",
+                        parameters= accuracy,
+                        success=True
+                    )
             except Exception as e:
                 logger.error(f"Failed to update model: {e}")
     

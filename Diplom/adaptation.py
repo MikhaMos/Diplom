@@ -26,7 +26,7 @@ class AdaptationManager:
     NORMAL_BG_COLOR = QColor(245, 247, 250)   # #F5F7FA (светлый фон)
     ADAPTIVE_BG_COLOR = QColor(30, 30, 47)    # #1E1E2F (тёмный фон)
 
-    NORMAL_GROUP_BG = QColor(245, 247, 250)    # #FFFFFF
+    NORMAL_GROUP_BG = QColor(245, 247, 250)    #f5f7fa
     ADAPTIVE_GROUP_BG = QColor(255, 200, 148)  ##ffc894
     """
     NORMAL_TEXT_COLOR = QColor(44, 62, 80)    # #2C3E50
@@ -122,7 +122,11 @@ class AdaptationManager:
         if not isinstance(widget, QWidget):
             return
         self.current_colors[widget] = color
-        widget.setStyleSheet(f"background-color: rgb({color.red()}, {color.green()}, {color.blue()})")        
+        if isinstance(widget, QPushButton):
+            widget.setStyleSheet(f"background-color: rgb({color.red()}, {color.green()}, {color.blue()}); color: white;")
+        else:
+            widget.setStyleSheet(f"background-color: rgb({color.red()}, {color.green()}, {color.blue()});")
+               
 
     def _stop_animation(self):
         if self.animation_timer:
@@ -377,7 +381,7 @@ class AdaptationManager:
                 width: 15px;
                 height: 15px;
                 border-radius: 4px;
-                background-color: white;
+                background-color: #F5F7FA;
                 border: 1px solid #ADB5BD;
             }
             
@@ -412,18 +416,18 @@ class AdaptationManager:
             QLabel {
                 color: #2C3E50;
                 font-size: 12px;
-                background-color: white;
+                background-color: #F5F7FA;
             }
             #TimeLabel, #StatusPanel,
             #Label_adaptive_mode, #Label_ML_status, #Label_robot_status {
                 font-weight: bold;
                 color: #0077B6;
-                background-color: white;
+                background-color: #F5F7FA;
             }
 
             /* ТЕКСТОВЫЕ ПОЛЯ */
             QTextEdit, QPlainTextEdit {
-                background-color: white;
+                background-color: #F5F7FA;
                 border: 1px solid #CED4DA;
                 border-radius: 6px;
                 font-size: 12px;
