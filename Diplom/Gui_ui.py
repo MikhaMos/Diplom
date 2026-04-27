@@ -644,7 +644,7 @@ class Ui_MainWindow(object):
         self.radioButton_7.setText(QCoreApplication.translate("MainWindow", u"8", None))
         self.radioButton_9.setText(QCoreApplication.translate("MainWindow", u"9", None))
         self.radioButton_10.setText(QCoreApplication.translate("MainWindow", u"10", None))
-        self.HistorySurvey.setTitle(QCoreApplication.translate("MainWindow", u"\u0418\u0441\u0442\u043e\u0440\u0438\u044f", None))
+        self.HistorySurvey.setTitle("")
         self.SentAnswer.setText(QCoreApplication.translate("MainWindow", u"\u041e\u0442\u043f\u0440\u0430\u0432\u0438\u0442\u044c", None))
         self.Question_2.setTitle("")
         self.label_12.setText(QCoreApplication.translate("MainWindow", u"\u041a\u043e\u043d\u0446\u0435\u043d\u0442\u0440\u0430\u0446\u0438\u044f", None))
