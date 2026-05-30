@@ -48,7 +48,7 @@ class MLClient(QObject):
                 self.error_occurred.emit(str(e))
                 raise
     
-    async def get_prediction_async(self, future_minutes: int=0) -> Dict[str, Any]:
+    async def get_prediction_async(self, future_minutes: int=0, task_complexity: int=1) -> Dict[str, Any]:
         if not self.websocket or not self.running:
             raise ConnectionError("Not connected to server")
         try:
@@ -59,7 +59,8 @@ class MLClient(QObject):
 
             message = {
                 "command": "predict",
-                "timestamp": target_time.isoformat()
+                "timestamp": target_time.isoformat(),
+                "task_complexity": task_complexity
                 }
             await self.websocket.send(json.dumps(message))
             response = await self.websocket.recv()
@@ -72,16 +73,18 @@ class MLClient(QObject):
                 features = {
                     'hour': target_time.hour,
                     'minute': target_time.minute,
-                    'day_of_week': target_time.weekday()
+                    'day_of_week': target_time.weekday(),
+                    'task_complexity': task_complexity
                 }
+                probs = result.get('probabilities', [])
 
                 self.db.log_ml_prediction(
                                     features=features,
-                                    prediction=result.get('prediction'),
+                                    prediction=result.get('prediction_class'),
                                     coffidence=result.get('confidence'),
-                                    prob_class1=result.get('prob_class1'),
+                                    probabilities=probs,
                                     threshold_used=result.get('threshold_used', 0.55),
-                                    adaptation_triggered=result.get('requires_adaptation',False)
+                                    adaptation_triggered=result.get('adaptation_level', 0) > 0
                                     )
                 
                 self.predictions_received.emit(result)
@@ -89,16 +92,15 @@ class MLClient(QObject):
         except Exception as e:
             logger.error(f"Error while getting prediction: {e}")
             raise
-
+    """
     async def should_adapt_interface(self):
-        """Определяет, нужно ли адаптировать интерфейс"""
+        #Определяет, нужно ли адаптировать интерфейс
         if not self.last_prediction:
             await self.get_prediction_async()
-
         return self.last_prediction.get('requires_adaptation', False)
     
     async def get_adaptation_level(self):
-        """Возвращает уровень адаптации (0.0-1.0)"""
+        #Возвращает уровень адаптации (0.0-1.0)
         if not self.last_prediction:
             await self.get_prediction_async()
 
@@ -109,7 +111,6 @@ class MLClient(QObject):
             return 0.0
         else:
             return min(1.0, (confidence-threshold)/(1.0-threshold))
-    """
     async def send_training_data_async(self, X:List, y:List):
          #Отправляет данные для дообучения модели
          if not self.websocket or not self.running:
@@ -213,14 +214,14 @@ class MLClient(QObject):
         thread.start()
         return thread
 
-    def get_prediction(self, future_minutes: int):
+    def get_prediction(self, future_minutes: int, task_complexity: int=1):
         """Запрашивает предсказание из главного потока"""
         if not self.running or not self.loop or self.loop.is_closed():
             logger.warning("Cannot get prediction: client not running")
             return
         
         asyncio.run_coroutine_threadsafe(
-            self.get_prediction_async(future_minutes=future_minutes),
+            self.get_prediction_async(future_minutes=future_minutes, task_complexity=task_complexity),
             self.loop
         )
 

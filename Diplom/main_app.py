@@ -11,6 +11,7 @@ import asyncio
 import threading
 from datetime import timedelta
 import logging
+import numpy as np
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -58,7 +59,9 @@ class MainWindow(QMainWindow):
         self.adaptation.apply_normal_style(self.ui, instant=True) #Стиль по умолчанию
 
         # Состояния
-        self.adaptive_mode = False
+        #self.full_adaptive_mode = False
+        #self.adaptive_mode = False
+        self.adaptation_level = 0
         self.survey_answered = False
         self.current_fatigue_level = 0
         self.current_confidence_level = 0
@@ -81,6 +84,12 @@ class MainWindow(QMainWindow):
 
         # Таймеры 
         self.setup_timers()
+
+        # Cложность задачи
+        self.current_task_complexity = 1
+        self._last_task_complexity = None
+        self.update_task_complexity() # установить согласно текущему часу
+       
 
         self.log_message(f"Startup time: {now().strftime('%H:%M:%S')}")
 
@@ -226,6 +235,7 @@ class MainWindow(QMainWindow):
         # ЗАпускаем в отдельных потоках
         self.robot_thread = self.robot_client.run_in_thread()
         self.ml_thread = self.ml_client.run_in_thread() 
+    
 
     @Slot()
     def show_control_page(self):
@@ -310,7 +320,7 @@ class MainWindow(QMainWindow):
             return
         
         # Сохраняем опрос в базу данных
-        self.db.save_survey(fatigue_level, concentration_level)
+        self.db.save_survey(fatigue_level, concentration_level, None)
 
         # Сохраняем опрос в лог
         self.db.log_command(
@@ -370,7 +380,14 @@ class MainWindow(QMainWindow):
         """Следующая проверка адаптации через 5 виртуальных минут."""
         self.next_ml_check_time = now() + timedelta(minutes=self.ml_check_interval)
         
-    
+    def update_task_complexity(self):
+        """Устанавливает сложность задачи для текущего часа (случайно)."""
+        # Генерируем с теми же весами, что и в generate_data: 0.4, 0.4, 0.2
+        complexity = np.random.choice([0, 1, 2], p=[0.4, 0.4, 0.2])
+        self.current_task_complexity = complexity
+        # Выводим в лог или интерфейс (опционально)
+        complexity_name = {0: "Легкая", 1: "Средняя", 2: "Сложная"}
+        self.log_message(f"Текущая сложность задачи: {complexity_name[complexity]}")
 
     @Slot()
     def show_survey_notification(self):
@@ -391,8 +408,13 @@ class MainWindow(QMainWindow):
     @Slot()
     def check_ml_adaptation(self):
         # Проверяем адаптацию ML
+        current_hour = now().hour
+        if not hasattr(self, '_last_complexity_hour') or current_hour != self._last_complexity_hour:
+            self.update_task_complexity()
+            self._last_complexity_hour = current_hour
+
         if hasattr(self, 'ml_client') and self.ml_client.running:
-            self.ml_client.get_prediction(future_minutes=20)
+            self.ml_client.get_prediction(future_minutes=20, task_complexity=int(self.current_task_complexity))
         
         self.db.log_command(
             source='main_app',
@@ -485,15 +507,21 @@ class MainWindow(QMainWindow):
         self.log_message("Robot disconnected")
     
     def on_ml_prediction(self, prediction):
-        requires_adaptation = prediction.get('requires_adaptation', False)
+        new_level = prediction.get('adaptation_level', 0)
         confidencce= prediction.get('confidence', 0.0)
         timestamp = prediction.get('timestamp')
-        self.ui.ML_prediction.append(f"ML prediction: timestamp={timestamp[11:16]}, requires_adaptation={requires_adaptation}, confidence={confidencce:.2f}")
-        logger.info(f"ML prediction: requires_adaptation={requires_adaptation}, confidence={confidencce:.2f}")
+        complexity = prediction.get('complexity')
+        self.ui.ML_prediction.append(f"ML prediction: timestamp={timestamp[11:16]}, level={new_level}, confidence={confidencce:.2f}, task_complexity={complexity}")
+        logger.info(f"ML prediction: requires_adaptation_level={new_level}, confidence={confidencce:.2f}")
 
-        if requires_adaptation and not self.adaptive_mode:
-            self.enable_adaptive_mode()
-        elif not requires_adaptation and self.adaptive_mode:
+        if new_level == self.adaptation_level:
+            return
+        
+        if new_level == 2:
+            self.enable_full_adaptive_mode() # интерфейс+робот
+        elif new_level == 1:
+            self.enable_interface_adaptive_mode() # интерфейс
+        elif new_level == 0:
             self.disable_adaptive_mode()
     
     def on_ml_error(self, error):
@@ -507,19 +535,34 @@ class MainWindow(QMainWindow):
         self.ui.Label_ML_status.setText(F" ML отключена")
         self.log_message("ML disconnected")
 
-    def enable_adaptive_mode(self):
-        self.adaptive_mode = True
-        self.log_message("Adaptive mode enabled")
+    def enable_full_adaptive_mode(self):
+        if self.adaptation_level == 2:
+            return
+        self.adaptation_level = 2
+        self.log_message("full adaptive mode enabled")
         self.ui.Label_adaptive_mode.setText(f" Адаптивный режим ВКЛ")
 
         self.adaptation.apply_adaptive_style(self.ui)
-
         #Отправляем команду адаптацию робота
         if hasattr(self, 'robot_client') and self.robot_client.running:
             self.robot_client.send_command('set_adaptive_mode',enabled=True)
     
+    def enable_interface_adaptive_mode(self):
+        if self.adaptation_level == 1:
+            return
+        self.adaptation_level = 1
+        self.log_message("interface adaptive mode enabled")
+        self.ui.Label_adaptive_mode.setText(f" Адаптивный режим ВКЛ")
+
+        self.adaptation.apply_adaptive_style(self.ui)
+        #Отправляем команду роботу
+        if hasattr(self, 'robot_client') and self.robot_client.running:
+            self.robot_client.send_command('set_adaptive_mode', enabled=False)
+
     def disable_adaptive_mode(self):
-        self.adaptive_mode = False
+        if self.adaptation_level == 0:
+            return
+        self.adaptation_level = 0
         self.log_message("Adaptive mode disabled")
         self.ui.Label_adaptive_mode.setText(f" Адаптивный режим ВЫКЛ")
         self.adaptation.apply_normal_style(self.ui)
