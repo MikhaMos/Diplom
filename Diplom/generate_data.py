@@ -8,12 +8,12 @@ np.random.default_rng(seed=42)
 
 # ------------------------------------------------------------
 # Фиксированные индивидуальные параметры человека (из статьи)
-a_tilda = [0.0015, 0.0010, 0.045]   # ã₁, ã₂, ã₃
-b_tilda = [0.480, 0.033, 2.503]    # b̃₁, b̃₂, b̃₃
-k_tilda = [0.65, 0.480, 0.25]      # k̃₁, k̃₂, k̃₃
+a_tilda = [0.0015, 0.00162, 0.045]   # ã₁, ã₂, ã₃
+b_tilda = [0.480, 0.233, 4.1]    # b̃₁, b̃₂, b̃₃
+k_tilda = [0.65, 0.980, 0.2]      # k̃₁, k̃₂, k̃₃
 gamma_tilda = [0.025, 0.050, 0.02] # γ̃₁, γ̃₂, γ̃₃
 h_tilda = 0.89                     # h̃₁
-d = [0.0002, 0.0007, 0.07]         # d₁, d₂, d₃
+d = [0.0002, 0.007, 0.05]         # d₁, d₂, d₃
 c = [0.0015, 0.001, 0.010]        # c₁, c₂, c₃
 
 # Коэффициенты чувствительности для S(t) (можно настраивать)
@@ -64,17 +64,35 @@ def generate_survey_data(start_date, num_weeks):
     Генерирует опросы для num_weeks недель (пн–пт) и сохраняет в CSV.
     """
     data_rows = []
+    task_complexity_map = {}
     current_date = start_date
     # Ищем первый понедельник
     while current_date.weekday() != 0:
         current_date += timedelta(days=1)
     
-    # Временная сетка: с 9:00 до 19:00 с шагом 20 минут
-    t_start = 9.0
+    # Временная сетка: с 10:00 до 19:00 с шагом 20 минут
+    t_start = 10.0
     t_end = 19.0
-    dt_hours = 20/ 60.0   # 20 минут = 1/12 часа
-    t_eval = np.arange(t_start, t_end + dt_hours, dt_hours)
-    
+    step = 20/ 60.0   # 20 минут = 1/12 часа
+
+    # Время обеда (начало перерыва) – 14:00
+    lunch_time = 14.0
+    lunch_end = lunch_time + 1
+
+    # Создаём сетку через np.linspace, чтобы гарантировать попадание в границы
+    n_steps = int(round((t_end - t_start) / step)) + 1
+    t_eval = np.linspace(t_start, t_end, n_steps)
+
+    # Точки до обеда (включительно) и после обеда (исключая точку обеда, чтобы не дублировать)
+    t_before = t_eval[t_eval <= lunch_time]
+    t_after = t_eval[t_eval > lunch_end]
+
+
+    # Коэффициенты восстановления после обеда
+    recovery_W = 1.4   # работоспособность увеличивается на 25%
+    recovery_F = 0.6   # утомляемость снижается на 25%
+    recovery_E = 0.6   # ошибаемость снижается на 25%
+
     
     for week in range(num_weeks):
         for day_offset in range(5):   # пн–пт
@@ -82,14 +100,60 @@ def generate_survey_data(start_date, num_weeks):
             date = current_date + timedelta(days=day_offset)
             day_of_week = date.weekday()   # 0-4
             y0 = init_conditions[day_of_week]
-            
-            # Интегрируем систему
+            """
             sol = solve_ivp(system, t_span=(t_eval[0], t_eval[-1]), y0=y0, method='RK45',
                 t_eval=t_eval, args=(None,), rtol=1e-6, atol=1e-8)
             W_vals, F_vals, E_vals = sol.y[0], sol.y[1], sol.y[2]
+           """
+
+            # Интегрируем систему
+            # ---- ПЕРВЫЙ ЭТАП: до обеда ----
+            sol = solve_ivp(system, t_span=(t_start, lunch_time), y0=y0, method='RK45',
+                t_eval=t_before, args=(None,), rtol=1e-6, atol=1e-8)
+            
+            W1, F1, E1 = sol.y[0], sol.y[1], sol.y[2]
+            
+            # ---- КОРРЕКТИРОВКА после обеда ----
+            W_last = W1[-1]
+            F_last = F1[-1]
+            E_last = E1[-1]
+            W_new = min(1.0, W_last * recovery_W)      # не выше 1.0
+            F_new = max(0.0, F_last * recovery_F)      # не ниже 0.0
+            E_new = max(0.0, E_last * recovery_E)
+            y0_after = (W_new, F_new, E_new)
+            
+            # ---- ВТОРОЙ ЭТАП: после обеда ----
+            if len(t_after) > 0:
+                sol2 = solve_ivp(system, t_span=(lunch_end, t_end), y0=y0_after,
+                                 method='RK45', t_eval=t_after, args=(None,),
+                                 rtol=1e-6, atol=1e-8)
+                W2 = sol2.y[0]
+                F2 = sol2.y[1]
+                E2 = sol2.y[2]
+                # Объединяем результаты
+                W_vals = np.concatenate([W1, W2])
+                F_vals = np.concatenate([F1, F2])
+                E_vals = np.concatenate([E1, E2])
+                times = np.concatenate([t_before, t_after])
+            else:
+                times = t_before
+                W_vals, F_vals, E_vals = W1, F1, E1
+      
+                    
+            # Для каждого момента времени сохраняем опрос
+            hour_complexity = {}
+            for hour in range(10, 19):
+                # вероятность 0.4, 0.4,0.2
+                task_complexity = np.random.choice([0, 1, 2], p=[0.4, 0.4, 0.2])
+                hour_complexity[hour] = task_complexity
             
             # Для каждого момента времени сохраняем опрос
-            for i, t in enumerate(t_eval):
+            for i, t in enumerate(times):
+
+                # Если точка попадает в обед (ровно lunch_time) – пропускаем (оператор не работает)
+                if lunch_time <= t < lunch_end:
+                    continue
+
                 # Преобразуем F и E в fatigue и concentration
                 fatigue_raw = 1 + 9 * F_vals[i]
                 concentration_raw = 10 - 9 * E_vals[i]
@@ -101,6 +165,8 @@ def generate_survey_data(start_date, num_weeks):
                 
                 # Время в формате datetime
                 hour = int(t)
+                if hour not in hour_complexity:
+                    continue
                 minute = int(round((t - hour) * 60))
                 if minute == 60:
                     hour += 1
@@ -117,7 +183,8 @@ def generate_survey_data(start_date, num_weeks):
                     'concentration_level': concentration,
                     'hour_of_day': timestamp.hour,
                     'minute_of_hour': timestamp.minute,
-                    'day_of_week': day_of_week
+                    'day_of_week': day_of_week,
+                    'task_complexity': hour_complexity[hour]
                 })
         # Переход к следующей неделе
         current_date += timedelta(days=7)
@@ -155,8 +222,8 @@ def plot_survey_data(csv_path='survey_response.csv',week_offset = 0):
 
     # Подготовка данных
     df['time_hours'] = df['timestamp'].dt.hour + df['timestamp'].dt.minute / 60.0
-    # Ограничим время 9-19 часами
-    df = df[(df['time_hours'] >= 9) & (df['time_hours'] <= 19)]
+    # Ограничим время 10-19 часами
+    df = df[(df['time_hours'] >= 10) & (df['time_hours'] <= 19)]
 
     days = ['Понедельник', 'Вторник', 'Среда', 'Четверг', 'Пятница']
     fig, axes = plt.subplots(2, 3, figsize=(15, 10))
@@ -179,13 +246,13 @@ def plot_survey_data(csv_path='survey_response.csv',week_offset = 0):
             ax.set_xlabel('Время суток (часы)')
             ax.set_ylabel('Уровень (1-10)')
             ax.set_ylim(1, 10)
-            ax.set_xlim(9, 19)
+            ax.set_xlim(10, 19)
             ax.grid(True, linestyle='--', alpha=0.6)
             ax.legend(fontsize='small')
         else:
             ax.text(0.5, 0.5, 'Нет данных', ha='center', va='center', transform=ax.transAxes)
             ax.set_title(days[i])
-            ax.set_xlim(9, 19)
+            ax.set_xlim(10, 19)
 
     # 2. Шестой subplot – средние кривые по всем дням
     ax_avg = axes[5]
@@ -205,7 +272,7 @@ def plot_survey_data(csv_path='survey_response.csv',week_offset = 0):
     ax_avg.set_xlabel('Время суток (часы)')
     ax_avg.set_ylabel('Уровень (1-10)')
     ax_avg.set_ylim(1, 10)
-    ax_avg.set_xlim(9, 19)
+    ax_avg.set_xlim(10, 19)
     ax_avg.grid(True, linestyle='--', alpha=0.6)
     ax_avg.legend(fontsize='small')
 
@@ -215,5 +282,5 @@ def plot_survey_data(csv_path='survey_response.csv',week_offset = 0):
 # ------------------------------------------------------------
 if __name__ == "__main__":
     start = datetime(2026, 3, 2)   # 1 апреля 2026
-    generate_survey_data(start, num_weeks=6)
+    generate_survey_data(start, num_weeks=8)
     plot_survey_data('survey_response.csv')

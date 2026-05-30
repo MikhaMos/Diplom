@@ -81,6 +81,51 @@ class KukaRobot:
         p.setGravity(0,0,-9.8)
 
         plane_id=p.loadURDF("plane.urdf")
+
+        """Центральная платформа"""
+        cylinder_collision = p.createCollisionShape(p.GEOM_CYLINDER, radius=1, height=0.1)
+        cylinder_visual = p.createVisualShape(p.GEOM_CYLINDER, radius=1, length=0.1, rgbaColor=[0.8, 0.8, 0.8, 1])
+        central_platform = p.createMultiBody(0, cylinder_collision, cylinder_visual, [0, 0, 0.5])
+       
+        """Рабочее место 1  (основное)  угол 0°"""
+        # Робот (средний круг, R=1.4)
+        p.loadURDF("table_square/table_square.urdf", [1.5, 0, 0], globalScaling=0.75)
+        self.robot_id=p.loadURDF("kuka_iiwa/model.urdf", [1.5, 0, 0.45],p.getQuaternionFromEuler([0,0,-1.55]), useFixedBase=True)
+        # Операционный стол (рядом с роботом, смещение по Y=-0.9, тот же радиус 1.8)
+        self.table_id = p.loadURDF("table/table.urdf", [1.8, -0.9, 0], globalScaling=0.8)
+        # Лоток (внешний круг, R=2.8, смещение по Y=0
+        p.loadURDF("table_square/table_square.urdf", [2.4, 0, 0], globalScaling=0.6)
+        p.loadURDF("tray/traybox.urdf", [2.4, 0, 0.4], globalScaling=0.6)
+
+        """Рабочее место 2 угол 90°"""
+        p.loadURDF("table_square/table_square.urdf", [0, 1.5, 0], globalScaling=0.75)
+        robot2 = p.loadURDF("kuka_iiwa/model.urdf", [0, 1.5, 0.45], useFixedBase=True)
+        # Операционный стол (смещение по X=-0.9)
+        table2 = p.loadURDF("table/table.urdf", [0.9, 1.8, 0], globalScaling=0.8)
+        # Лоток (внешний круг, R=2.8, по X=0)
+        p.loadURDF("table_square/table_square.urdf", [0, 2.4, 0], globalScaling=0.6)
+        tray2 = p.loadURDF("tray/traybox.urdf", [0, 2.4, 0.4], globalScaling=0.6)
+
+        """Рабочее место  3 угол 180°"""
+        # Робот (средний круг, R=1.8)
+        self.human_id = p.loadURDF("humanoid/humanoid.urdf", [-1.8, 0, 0.73],p.getQuaternionFromEuler([1.5,0,1.5]), useFixedBase=True, globalScaling=0.2)
+        # Операционный стол (смещение по Y=+0.9)
+        table3 = p.loadURDF("table/table.urdf", [-1.8, 0.9, 0], globalScaling=0.8)
+        # Лоток (внешний круг, R=2.8)
+        p.loadURDF("table_square/table_square.urdf", [-2.4, 0, 0], globalScaling=0.6)
+        tray3 = p.loadURDF("tray/traybox.urdf", [-2.4, 0, 0.4], globalScaling=0.6)
+        
+        """Рабочее место  4 угол 270°"""
+        # Робот
+        p.loadURDF("table_square/table_square.urdf", [0, -1.5, 0], globalScaling=0.75)
+        robot4 = p.loadURDF("kuka_iiwa/model.urdf", [0, -1.5, 0.45],  p.getQuaternionFromEuler([0,0,3.14]), useFixedBase=True)
+        # Операционный стол (смещение по X=+0.9)
+        table4 = p.loadURDF("table/table.urdf", [-0.9, -1.8, 0], p.getQuaternionFromEuler([0,0,1.55]),  globalScaling=0.8)
+        # Лоток (внешний круг, R=2.4)
+        p.loadURDF("table_square/table_square.urdf", [0, -2.4, 0], globalScaling=0.6)
+        tray4 = p.loadURDF("tray/traybox.urdf", [0, -2.4, 0.4], globalScaling=0.6)
+
+        """
         #Стол
         table_pos = [0.0, 0.0, 0.0]
         table_ori = p.getQuaternionFromEuler([0, 0, 0])
@@ -107,7 +152,8 @@ class KukaRobot:
                                    useFixedBase=True,
                                    globalScaling=0.3)
         
-        self.create_objects()
+        
+        self.create_objects()"""
 
         self._init_joints()
 

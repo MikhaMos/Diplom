@@ -39,7 +39,8 @@ class Database:
             concentration_level integer CHECK(concentration_level >= 0 AND concentration_level <= 10),
             hour_of_day integer,
             minute_of_hour integer,
-            day_of_week integer
+            day_of_week integer,
+            task_complexity integer CHECK(task_complexity IN (0,1,2))
             )
         """)
 
@@ -74,7 +75,7 @@ class Database:
                 features TEXT, 
                 prediction boolean, 
                 confidence REAL,
-                prob_class1 REAL,
+                probabilities TEXT,
                 threshold_used REAL, 
                 adaptation_triggered boolean
                 )
@@ -114,15 +115,15 @@ class Database:
         logger.info(f"Survey scheduler started with interval {self.survey_interval}s")
 
 
-    def save_survey(self, fatigue_level: int, concentration_level: int):
+    def save_survey(self, fatigue_level: int, concentration_level: int, task_complexity: int):
         cursor = self.connection.cursor()
         current_time = now()
 
         cursor.execute("""
-            INSERT INTO Survey_response (timestamp, fatigue_level, concentration_level, hour_of_day, minute_of_hour, day_of_week)
-            values(?,?,?,?,?,?)
+            INSERT INTO Survey_response (timestamp, fatigue_level, concentration_level, hour_of_day, minute_of_hour, day_of_week, task_complexity)
+            values(?,?,?,?,?,?,?)
         """,
-            (current_time.strftime("%Y-%m-%d %H:%M:%S"), fatigue_level, concentration_level,current_time.hour, current_time.minute, current_time.weekday()))
+            (current_time.strftime("%Y-%m-%d %H:%M:%S"), fatigue_level, concentration_level,current_time.hour, current_time.minute, current_time.weekday(),task_complexity))
         self.connection.commit()
        
         self._update_survey_interval()
@@ -195,7 +196,7 @@ class Database:
     def get_training_data(self, limit: int= 1000):
         cursor = self.connection.cursor()
         cursor.execute("""
-            SELECT timestamp, fatigue_level, concentration_level 
+            SELECT timestamp, fatigue_level, concentration_level, task_complexity
             FROM Survey_response
             ORDER BY timestamp DESC
             LIMIT ?
@@ -208,17 +209,18 @@ class Database:
         return cursor.fetchone()[0]
     
     def log_ml_prediction(self, features:dict, prediction:bool,
-                        coffidence:float,prob_class1:float, threshold_used:float,
+                        coffidence:float,probabilities:list, threshold_used:float,
                         adaptation_triggered:bool):
         """Логирует предсказание ML модели"""
         cursor = self.connection.cursor()
         features_json = json.dumps(features)
+        probs_json = json.dumps(probabilities)
         current_time = now()
         cursor.execute("""
-            INSERT INTO ml_predictions (timestamp, features, prediction, confidence, prob_class1, threshold_used, adaptation_triggered)
+            INSERT INTO ml_predictions (timestamp, features, prediction, confidence, probabilities, threshold_used, adaptation_triggered)
             values(?,?,?,?,?,?,?)
         """,
-            (current_time.strftime("%Y-%m-%d %H:%M:%S"), features_json, prediction, coffidence, prob_class1,  threshold_used, adaptation_triggered))
+            (current_time.strftime("%Y-%m-%d %H:%M:%S"), features_json, prediction, coffidence, probs_json,  threshold_used, adaptation_triggered))
         self.connection.commit()
 
     def stop_survey_scheduler(self):

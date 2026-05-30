@@ -37,6 +37,7 @@ class MLServer:
 
                     if command == 'predict':
                         timestamp_str = data.get('timestamp')
+                        task_complexity = data.get('task_complexity', 1) # по умолчанию 1 (средняя)
                         if timestamp_str:
                             try:
                                 from datetime import datetime
@@ -46,15 +47,16 @@ class MLServer:
                         else:
                             timestamp = now()
                          
-                        prediction, confidence, prob_class1  = self.model.predict(timestamp)
-                        
+                        pred_class, confidence, proba  = self.model.predict(timestamp, task_complexity)
+                        adaptation_level = self.model.get_adaptation_level(pred_class)
                         response = {
                             'type': 'prediction',
-                            'prediction': bool(prediction),
+                            'prediction_class': int(pred_class),
                             'confidence': float(confidence),
-                            'prob_class1': float(prob_class1),
-                            'threshold_used': float(self.model.confidence_threshold),
-                            'requires_adaptation': bool(prob_class1 > self.model.confidence_threshold),
+                            'probabilities': [float(p) for p in proba],
+                            #'threshold_used': float(self.model.confidence_threshold),
+                            'adaptation_level': self.model.get_adaptation_level(pred_class),
+                            'complexity': task_complexity,
                             'timestamp': timestamp.isoformat()
                         }
 
@@ -62,7 +64,7 @@ class MLServer:
                         self.db.log_command(
                             source="server_ml",
                             command="predict_result",
-                            parameters= f"timestamp_predict: {timestamp}, prediction: {prediction}, confidence: {confidence:.2f}, prob_class1: {prob_class1:.2f}",
+                            parameters= f"timestamp_predict: {timestamp}, prediction_class: {pred_class}, confidence: {confidence:.2f}, probabilities: [{proba[0]:.2f}, {proba[1]:.2f}, {proba[2]:.2f}]",
                             success=True
                         )
 
@@ -132,12 +134,23 @@ class MLServer:
                         timestamp = datetime.fromisoformat(timestamp_str)
                     except:
                         continue
-                    X.append(self.model.extract_features(timestamp))
+                    
                     fatigue_level = row['fatigue_level']
                     concentration_level = row['concentration_level']
-                    # Цель: устал если усталость >=5 и концентрация <=4
-                    target = 1 if (fatigue_level >= 5 and concentration_level <= 4) else 0
+                    task_complexity = row['task_complexity']
+
+                    
+                    X.append(self.model.extract_features(timestamp,task_complexity))
+                    
+                    # Трёхклассовая цель
+                    if fatigue_level >= 6 and concentration_level <= 3:
+                        target = 2
+                    elif 4 <= fatigue_level <= 6 and 4 <= concentration_level <= 5:
+                        target = 1
+                    else:
+                        target = 0
                     y.append(target)
+
                 if len(X)>0:
                     X = np.array(X)
                     y = np.array(y)

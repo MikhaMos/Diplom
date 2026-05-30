@@ -293,6 +293,310 @@ def plot_decision_regions(X, y, classifier, resolution=0.02):
                     marker=markers[idx], label=cl)
 
 # ----------------------------------------------------------------------
+
+# 7. Подготовка данных из БД для многоклассовой классификации
+def prepare_multiclass_data(db, limit=10000):
+    """
+    Загружает данные из БД, формирует признаки (время + task_complexity)
+    и целевые метки: 0 - не устал, 1 - устал, 2 - очень устал.
+    Возвращает X, y, timestamps.
+    """
+    rows = db.get_training_data(limit=limit)  # (timestamp, fatigue, concentration, complexity)
+    if not rows:
+        return None, None, None
+    predictor = FatiguePredictor()  # нужен только для extract_features
+    X_list, y_list, timestamps = [], [], []
+    for row in rows:
+        # row: (timestamp_str, fatigue, concentration, task_complexity)
+        ts_str = row[0]
+        fatigue = row[1]
+        concentration = row[2]
+        complexity = row[3] if len(row) > 3 else 1  # по умолчанию средняя
+        if complexity is None:
+            complexity = 1
+        dt = datetime.fromisoformat(ts_str)
+        features = predictor.extract_features(dt, complexity)  # теперь с параметром сложности
+        # Целевая метка (по правилам, использованным при обучении)
+        if fatigue >= 7 and concentration <= 3:
+            target = 2
+        elif 4 <= fatigue <= 6 and 4 <= concentration <= 5:
+            target = 1
+        else:
+            target = 0
+        X_list.append(features)
+        y_list.append(target)
+        timestamps.append(dt)
+    return np.array(X_list), np.array(y_list), timestamps
+
+# ----------------------------------------------------------------------
+# 8. Оценка многоклассовой модели: отчёт, матрица ошибок, ROC-кривые
+def evaluate_multiclass_model(X, y, model=None, test_size=0.3, random_state=42):
+    """
+    Обучает (или использует переданную) модель на признаках X и метках y.
+    Выводит classification report, строит матрицу ошибок и ROC-кривые (один против всех).
+    """
+
+    from sklearn.model_selection import train_test_split
+    from sklearn.metrics import classification_report, confusion_matrix, roc_curve, auc, ConfusionMatrixDisplay
+    from sklearn.preprocessing import StandardScaler
+    from sklearn.linear_model import LogisticRegression
+
+    X_train, X_test, y_train, y_test = train_test_split(
+        X, y, test_size=test_size, random_state=random_state, stratify=y
+    )
+    scaler = StandardScaler()
+    X_train_scaled = scaler.fit_transform(X_train)
+    X_test_scaled = scaler.transform(X_test)
+
+    if model is None:
+        model = LogisticRegression(solver='lbfgs', max_iter=1000, C=1.0)
+    model.fit(X_train_scaled, y_train)
+    y_pred = model.predict(X_test_scaled)
+    y_proba = model.predict_proba(X_test_scaled)
+
+    # Отчёт
+    target_names = ['Не устал (0)', 'Устал (1)', 'Очень устал (2)']
+    print("\n=== CLASSIFICATION REPORT ===")
+    print(classification_report(y_test, y_pred, target_names=target_names))
+
+    # Матрица ошибок
+    
+    cm = confusion_matrix(y_test, y_pred)
+    disp = ConfusionMatrixDisplay(confusion_matrix=cm, display_labels=target_names)
+    disp.plot(cmap=plt.cm.Blues)
+    plt.title('Confusion Matrix')
+    
+
+    # ROC-кривые (One-vs-Rest)
+    plt.figure(11)
+    fpr, tpr, roc_auc = {}, {}, {}
+    for i in range(3):
+        fpr[i], tpr[i], _ = roc_curve(y_test == i, y_proba[:, i])
+        roc_auc[i] = auc(fpr[i], tpr[i])
+
+    colors = ['blue', 'green', 'red']
+    for i in range(3):
+        plt.plot(fpr[i], tpr[i], color=colors[i], lw=2,
+                 label=f'{target_names[i]} (AUC = {roc_auc[i]:.2f})')
+    plt.plot([0, 1], [0, 1], 'k--', lw=1)
+    plt.xlim([0.0, 1.0])
+    plt.ylim([0.0, 1.05])
+    plt.xlabel('False Positive Rate')
+    plt.ylabel('True Positive Rate')
+    plt.title('ROC curves (One-vs-Rest)')
+    plt.legend(loc='lower right')
+    plt.grid(True)
+    plt.show()
+
+    return model, scaler
+
+# ----------------------------------------------------------------------
+# 9. Динамика применения адаптации
+def plot_adaptation_levels_over_time(db):
+    """
+    Строит 5 subplot'ов (пн–пт) с количеством, когда модель предсказала:
+    - уровень 1 (только интерфейс)
+    - уровень 2 (интерфейс+робот)
+    По оси X – время суток (20-минутные интервалы), по Y – количество предсказаний.
+    Шестой subplot – среднее количество по всем дням (или сумма – по желанию).
+    """
+    import sqlite3
+    import pandas as pd
+    import matplotlib.pyplot as plt
+    import numpy as np
+
+    conn = sqlite3.connect(db.db)
+    query = """
+        SELECT timestamp, prediction
+        FROM ml_predictions
+        ORDER BY timestamp
+    """
+    df = pd.read_sql_query(query, conn)
+    conn.close()
+    if df.empty:
+        print("Нет данных в ml_predictions.")
+        return
+
+    df['timestamp'] = pd.to_datetime(df['timestamp'])
+    df['day_of_week'] = df['timestamp'].dt.weekday
+    df['time_hours'] = df['timestamp'].dt.hour + df['timestamp'].dt.minute / 60.0
+    df = df[(df['day_of_week'].isin([0,1,2,3,4])) & (df['time_hours'] >= 9) & (df['time_hours'] <= 19)]
+
+    days = ['Понедельник', 'Вторник', 'Среда', 'Четверг', 'Пятница']
+    fig, axes = plt.subplots(2, 3, figsize=(15, 10))
+    axes = axes.flatten()
+
+    bin_width = 20 / 60.0  # 20 минут
+    bins = np.arange(9, 19 + bin_width, bin_width)
+
+    # --- 1. По дням ---
+    for i, day_idx in enumerate(range(5)):
+        ax = axes[i]
+        day_data = df[df['day_of_week'] == day_idx].copy()
+        if not day_data.empty:
+            day_data['time_bin'] = pd.cut(day_data['time_hours'], bins=bins, right=False)
+            # Считаем количество (а не долю) для каждого класса
+            level1_counts = day_data.groupby('time_bin').apply(lambda g: (g['prediction'] == 1).sum())
+            level2_counts = day_data.groupby('time_bin').apply(lambda g: (g['prediction'] == 2).sum())
+            bin_centers = [(interval.left + interval.right)/2 for interval in level1_counts.index]
+            ax.bar(bin_centers, level1_counts.values, width=bin_width*0.8, alpha=0.7, label='Только интерфейс (ур.1)')
+            ax.bar(bin_centers, level2_counts.values, width=bin_width*0.8, alpha=0.7, bottom=level1_counts.values, label='Интерфейс+робот (ур.2)')
+            ax.set_title(days[i])
+            ax.set_xlabel('Время суток (часы)')
+            ax.set_ylabel('Количество адаптаций')
+            # Убираем лимит 0..1, теперь автоматический
+            ax.set_xlim(9, 19)
+            ax.grid(True, linestyle='--', alpha=0.6)
+            ax.legend(fontsize='small')
+        else:
+            ax.text(0.5, 0.5, 'Нет данных', ha='center', va='center', transform=ax.transAxes)
+            ax.set_title(days[i])
+            ax.set_xlim(9, 19)
+
+    # --- 2. Шестой subplot – среднее количество по всем дням (сумма/количество дней) ---
+    ax_avg = axes[5]
+    df['time_bin'] = pd.cut(df['time_hours'], bins=bins, right=False)
+    # Суммируем по всем дням
+    total_level1 = df.groupby('time_bin').apply(lambda g: (g['prediction'] == 1).sum())
+    total_level2 = df.groupby('time_bin').apply(lambda g: (g['prediction'] == 2).sum())
+    bin_centers = [(interval.left + interval.right)/2 for interval in total_level1.index]
+    # Сглаживание (скользящее окно 3) для уровней
+    smooth1 = total_level1.rolling(window=3, center=True).mean()
+    smooth2 = total_level2.rolling(window=3, center=True).mean()
+    # Рисуем stacked bar – суммарное количество по всем дням
+    ax_avg.bar(bin_centers, total_level1.values, width=bin_width*0.8, alpha=0.5, label='Ур.1 (только интерфейс)')
+    ax_avg.bar(bin_centers, total_level2.values, width=bin_width*0.8, alpha=0.5, bottom=total_level1.values, label='Ур.2 (интерфейс+робот)')
+    ax_avg.plot(bin_centers, smooth1, 'b-', linewidth=2, label='Тренд ур.1 (сумма)')
+    ax_avg.plot(bin_centers, smooth2, 'r-', linewidth=2, label='Тренд ур.2 (сумма)')
+    ax_avg.set_title('Общее количество адаптаций (все дни)')
+    ax_avg.set_xlabel('Время суток (часы)')
+    ax_avg.set_ylabel('Суммарное количество')
+    ax_avg.set_xlim(9, 19)
+    ax_avg.grid(True, linestyle='--', alpha=0.6)
+    ax_avg.legend(fontsize='small')
+
+    plt.tight_layout()
+    plt.show()
+
+# ----------------------------------------------------------------------
+# 12. График границы решения: время суток vs сложность задачи (по дням недели)
+def plot_decision_time_complexity_contour(db, model=None, scaler=None):
+    """
+    Строит 2x3 subplot с контурными картами решений модели
+    на плоскости "время суток (часы) - сложность задачи (0,1,2)".
+    Используется уже обученная модель (10 признаков).
+    """
+    import pickle
+    import numpy as np
+    import matplotlib.pyplot as plt
+    from matplotlib.colors import ListedColormap
+    from datetime import datetime
+    from sklearn.preprocessing import StandardScaler
+    from sklearn.linear_model import LogisticRegression
+
+    # Загружаем или обучаем модель
+    if model is None or scaler is None:
+        try:
+            with open("fatigue_model.pkl", "rb") as f:
+                data = pickle.load(f)
+                model = data["model"]
+                scaler = data["scaler"]
+            print("Загружена модель из fatigue_model.pkl")
+        except:
+            print("Модель не найдена. Обучаем новую на данных БД...")
+            X, y, _ = prepare_multiclass_data(db, limit=10000)
+            if X is None or len(X) == 0:
+                print("Нет данных для обучения.")
+                return
+            from sklearn.model_selection import train_test_split
+            X_train, _, y_train, _ = train_test_split(X, y, test_size=0.3, random_state=42)
+            scaler = StandardScaler()
+            X_train_scaled = scaler.fit_transform(X_train)
+            model = LogisticRegression(solver='lbfgs', max_iter=1000, C=1.0)
+            model.fit(X_train_scaled, y_train)
+            print("Модель обучена.")
+
+    # Параметры сетки
+    hours = np.arange(9, 19.1, 0.05)          # шаг 0.05 часа (~3 мин) для гладкости
+    complexities = [0, 1, 2]                 # три уровня сложности
+    days = list(range(5))
+    day_names = ['Понедельник', 'Вторник', 'Среда', 'Четверг', 'Пятница']
+    base_dates = [datetime(2026, 3, 2 + i) for i in range(5)]  # пн..пт
+
+    predictor = FatiguePredictor()  # только для extract_features
+
+    # Создаём сетку для контурного графика (время, сложность)
+    # Но pcolormesh требует равномерную сетку, а у нас сложность дискретна,
+    # поэтому мы построим 3 горизонтальные полосы, каждая с непрерывным временем.
+    # Будем использовать pcolormesh: X – часы, Y – целые значения сложности.
+    # Создаём массивы для mesh: границы ячеек по времени и по сложности.
+    x_edges = np.append(hours, hours[-1] + 0.05) - 0.025  # центрирование
+    y_edges = np.array([-0.5, 0.5, 1.5, 2.5])             # для сложности 0,1,2
+
+    # Массив предсказаний: (день, сложность, час) -> Z
+    Z_all = np.zeros((len(days), len(complexities), len(hours)))
+
+    for d, base in enumerate(base_dates):
+        for c_idx, comp in enumerate(complexities):
+            for t_idx, h in enumerate(hours):
+                minute = int((h - int(h)) * 60)
+                hour = int(h)
+                ts = base.replace(hour=hour, minute=minute, second=0)
+                feats = predictor.extract_features(ts, comp).reshape(1, -1)
+                feats_scaled = scaler.transform(feats)
+                pred = model.predict(feats_scaled)[0]
+                Z_all[d, c_idx, t_idx] = pred
+
+    # Цветовая карта для трёх классов
+    cmap = ListedColormap(['#2ca02c', '#ff7f0e', '#d62728'])  # зелёный, оранж, красный
+
+    fig, axes = plt.subplots(2, 3, figsize=(15, 10))
+    axes = axes.flatten()
+
+    # 5 графиков по дням
+    for i, d in enumerate(days):
+        ax = axes[i]
+        Z_day = Z_all[d, :, :]   # форма (3, len(hours))
+        # pcolormesh ожидает Z размером (len(y_edges)-1, len(x_edges)-1) = (3, len(hours))
+        mesh = ax.pcolormesh(x_edges, y_edges, Z_day, cmap=cmap, shading='flat', edgecolors='black', linewidth=0.3)
+        ax.set_title(day_names[d])
+        ax.set_xlabel('Время суток (часы)')
+        ax.set_ylabel('Сложность задачи')
+        ax.set_yticks([0, 1, 2])
+        ax.set_yticklabels(['Лёгкая (0)', 'Средняя (1)', 'Сложная (2)'])
+        ax.set_xlim(9, 19)
+        ax.set_ylim(-0.5, 2.5)
+        ax.grid(True, linestyle='--', alpha=0.4)
+
+    # 6-й график: мода по дням
+    ax_mode = axes[5]
+    Z_mode = np.zeros((len(complexities), len(hours)))
+    for c_idx in range(len(complexities)):
+        for t_idx in range(len(hours)):
+            preds_over_days = Z_all[:, c_idx, t_idx].astype(int)
+            # если несколько мод, берём наименьшую (или можно выбрать любую)
+            counts = np.bincount(preds_over_days)
+            mode_class = np.argmax(counts)
+            Z_mode[c_idx, t_idx] = mode_class
+    ax_mode.pcolormesh(x_edges, y_edges, Z_mode, cmap=cmap, shading='flat', edgecolors='black', linewidth=0.3)
+    ax_mode.set_title('Наиболее частый класс (мода по 5 дням)')
+    ax_mode.set_xlabel('Время суток (часы)')
+    ax_mode.set_ylabel('Сложность задачи')
+    ax_mode.set_yticks([0, 1, 2])
+    ax_mode.set_yticklabels(['Лёгкая (0)', 'Средняя (1)', 'Сложная (2)'])
+    ax_mode.set_xlim(9, 19)
+    ax_mode.set_ylim(-0.5, 2.5)
+    ax_mode.grid(True, linestyle='--', alpha=0.4)
+
+    # Общая легенда
+    from matplotlib.patches import Patch
+    legend_elements = [Patch(facecolor='#2ca02c', label='Не устал (0)'),
+                       Patch(facecolor='#ff7f0e', label='Устал (1)'),
+                       Patch(facecolor='#d62728', label='Очень устал (2)')]
+    fig.legend(handles=legend_elements, loc='lower center', ncol=3, fontsize='large')
+    plt.tight_layout(rect=[0, 0.05, 1, 1])
+    plt.show()
+
 def main():
     db = Database()
     """
@@ -308,13 +612,15 @@ def main():
     """
 
     # График 1: динамика вероятности по времени
-    plot_prediction_over_time(db)
+    #plot_prediction_over_time(db)
 
     # График 2: средняя вероятность по часам
     #plot_hourly_avg_probability(timestamps, y_prob)
 
     # График 3: работоспособность (fatigue trend)
-    plot_fatigue_trend(db)
+    #plot_fatigue_trend(db)
+    # График 4: динамика частоты адаптаций
+    #plot_adaptation_levels_over_time(db)
 
     # ------------------------------------------------------------------
     # Закомментированные графики (матрица ошибок, граница решения)
@@ -330,6 +636,16 @@ def main():
     """
     # 5. График 3: граница решения для двух признаков (hour_sin, hours_since_start)
     #plot_fatigue_concentration_decision(db)
+
+    
+    # ---- НОВОЕ: проверка модели на исторических данных ----
+    X, y, timestamps = prepare_multiclass_data(db, limit=10000)
+    if X is not None:
+        print(f"Загружено {len(X)} образцов. Распределение классов: {np.bincount(y)}")
+        evaluate_multiclass_model(X, y)
+    else:
+        print("Нет данных в БД. Сначала соберите опросы или сгенерируйте данные.")
+
     plt.show()
 
 if __name__ == "__main__":
