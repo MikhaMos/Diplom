@@ -41,7 +41,7 @@ class FatiguePredictor:
         comp_onehot = [0,0,0]
         if task_complexity is None:
             task_complexity = 1
-        weights = {0: 0.8, 1: 1, 2: 2.0}
+        weights = {0: 0.5, 1: 2.0, 2: 4.0}
         comp_onehot[task_complexity] = weights[task_complexity]
 
 

@@ -144,7 +144,7 @@ def generate_survey_data(start_date, num_weeks):
             hour_complexity = {}
             for hour in range(10, 19):
                 # вероятность 0.4, 0.4,0.2
-                task_complexity = np.random.choice([0, 1, 2], p=[0.4, 0.4, 0.2])
+                task_complexity = np.random.choice([0, 1, 2], p=[0.2, 0.5, 0.3])
                 hour_complexity[hour] = task_complexity
             
             # Для каждого момента времени сохраняем опрос
@@ -157,6 +157,16 @@ def generate_survey_data(start_date, num_weeks):
                 # Преобразуем F и E в fatigue и concentration
                 fatigue_raw = 1 + 9 * F_vals[i]
                 concentration_raw = 10 - 9 * E_vals[i]
+
+
+                if task_complexity == 0:
+                    fatigue_raw = fatigue_raw * 0.7
+                    concentration_raw = concentration_raw * 1.3
+
+                if task_complexity == 2:
+                    fatigue_raw = fatigue_raw * 1.2
+                    concentration_raw = concentration_raw * 0.8
+
                 # Добавляем шум (нормальный, σ=0.4)
                 fatigue_noisy = fatigue_raw + np.random.normal(-0.5, 0.4)
                 concentration_noisy = concentration_raw + np.random.normal(-0.5, 0.4)

@@ -4,7 +4,7 @@ from datetime import datetime
 model = FatiguePredictor("fatigue_model.pkl")  # загружает обученную модель
 
 # Пример: строка №22 (2026-03-02 17:00, сложность 2)
-timestamp = datetime(2026, 3, 2, 17, 30, 0)
+timestamp = datetime(2026, 3, 2, 13, 30, 0)
 task_complexity = 0  # 0,1,2
 
 pred_class, confidence, probs = model.predict(timestamp, task_complexity)
