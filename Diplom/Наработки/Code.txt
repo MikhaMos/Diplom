@@ -1,4 +1,5 @@
-Adaptetion.py:from PySide6.QtCore import QTimer, QSize, Qt
+adaptation.py:
+from PySide6.QtCore import QTimer, QSize, Qt
 from PySide6.QtGui import  QColor
 from PySide6.QtWidgets import QPushButton, QLabel, QGraphicsOpacityEffect, QWidget, QMainWindow
 from time_controller import now, time_controller
@@ -549,7 +550,7 @@ class AdaptationManager:
             }
         """
     
-client_App_ml.py:
+client_app_ml: 
 import websockets
 import asyncio
 import json
@@ -600,7 +601,7 @@ class MLClient(QObject):
                 self.error_occurred.emit(str(e))
                 raise
     
-    async def get_prediction_async(self, future_minutes: int=0) -> Dict[str, Any]:
+    async def get_prediction_async(self, future_minutes: int=0, task_complexity: int=1) -> Dict[str, Any]:
         if not self.websocket or not self.running:
             raise ConnectionError("Not connected to server")
         try:
@@ -611,7 +612,8 @@ class MLClient(QObject):
 
             message = {
                 "command": "predict",
-                "timestamp": target_time.isoformat()
+                "timestamp": target_time.isoformat(),
+                "task_complexity": task_complexity
                 }
             await self.websocket.send(json.dumps(message))
             response = await self.websocket.recv()
@@ -624,16 +626,18 @@ class MLClient(QObject):
                 features = {
                     'hour': target_time.hour,
                     'minute': target_time.minute,
-                    'day_of_week': target_time.weekday()
+                    'day_of_week': target_time.weekday(),
+                    'task_complexity': task_complexity
                 }
+                probs = result.get('probabilities', [])
 
                 self.db.log_ml_prediction(
                                     features=features,
-                                    prediction=result.get('prediction'),
+                                    prediction=result.get('prediction_class'),
                                     coffidence=result.get('confidence'),
-                                    prob_class1=result.get('prob_class1'),
+                                    probabilities=probs,
                                     threshold_used=result.get('threshold_used', 0.55),
-                                    adaptation_triggered=result.get('requires_adaptation',False)
+                                    adaptation_triggered=result.get('adaptation_level', 0) > 0
                                     )
                 
                 self.predictions_received.emit(result)
@@ -641,16 +645,15 @@ class MLClient(QObject):
         except Exception as e:
             logger.error(f"Error while getting prediction: {e}")
             raise
-
+    """
     async def should_adapt_interface(self):
-        """Определяет, нужно ли адаптировать интерфейс"""
+        #Определяет, нужно ли адаптировать интерфейс
         if not self.last_prediction:
             await self.get_prediction_async()
-
         return self.last_prediction.get('requires_adaptation', False)
     
     async def get_adaptation_level(self):
-        """Возвращает уровень адаптации (0.0-1.0)"""
+        #Возвращает уровень адаптации (0.0-1.0)
         if not self.last_prediction:
             await self.get_prediction_async()
 
@@ -661,7 +664,6 @@ class MLClient(QObject):
             return 0.0
         else:
             return min(1.0, (confidence-threshold)/(1.0-threshold))
-    """
     async def send_training_data_async(self, X:List, y:List):
          #Отправляет данные для дообучения модели
          if not self.websocket or not self.running:
@@ -765,14 +767,14 @@ class MLClient(QObject):
         thread.start()
         return thread
 
-    def get_prediction(self, future_minutes: int):
+    def get_prediction(self, future_minutes: int, task_complexity: int=1):
         """Запрашивает предсказание из главного потока"""
         if not self.running or not self.loop or self.loop.is_closed():
             logger.warning("Cannot get prediction: client not running")
             return
         
         asyncio.run_coroutine_threadsafe(
-            self.get_prediction_async(future_minutes=future_minutes),
+            self.get_prediction_async(future_minutes=future_minutes, task_complexity=task_complexity),
             self.loop
         )
 
@@ -806,7 +808,7 @@ class MLClient(QObject):
                 pass
         await self._close_connection()
     
-client_App_pybullet.py
+client_app_pybulle.py:
 import websockets
 import asyncio
 import json
@@ -1072,7 +1074,8 @@ class Database:
             concentration_level integer CHECK(concentration_level >= 0 AND concentration_level <= 10),
             hour_of_day integer,
             minute_of_hour integer,
-            day_of_week integer
+            day_of_week integer,
+            task_complexity integer CHECK(task_complexity IN (0,1,2))
             )
         """)
 
@@ -1107,7 +1110,7 @@ class Database:
                 features TEXT, 
                 prediction boolean, 
                 confidence REAL,
-                prob_class1 REAL,
+                probabilities TEXT,
                 threshold_used REAL, 
                 adaptation_triggered boolean
                 )
@@ -1147,15 +1150,15 @@ class Database:
         logger.info(f"Survey scheduler started with interval {self.survey_interval}s")
 
 
-    def save_survey(self, fatigue_level: int, concentration_level: int):
+    def save_survey(self, fatigue_level: int, concentration_level: int, task_complexity: int):
         cursor = self.connection.cursor()
         current_time = now()
 
         cursor.execute("""
-            INSERT INTO Survey_response (timestamp, fatigue_level, concentration_level, hour_of_day, minute_of_hour, day_of_week)
-            values(?,?,?,?,?,?)
+            INSERT INTO Survey_response (timestamp, fatigue_level, concentration_level, hour_of_day, minute_of_hour, day_of_week, task_complexity)
+            values(?,?,?,?,?,?,?)
         """,
-            (current_time.strftime("%Y-%m-%d %H:%M:%S"), fatigue_level, concentration_level,current_time.hour, current_time.minute, current_time.weekday()))
+            (current_time.strftime("%Y-%m-%d %H:%M:%S"), fatigue_level, concentration_level,current_time.hour, current_time.minute, current_time.weekday(),task_complexity))
         self.connection.commit()
        
         self._update_survey_interval()
@@ -1228,7 +1231,7 @@ class Database:
     def get_training_data(self, limit: int= 1000):
         cursor = self.connection.cursor()
         cursor.execute("""
-            SELECT timestamp, fatigue_level, concentration_level 
+            SELECT timestamp, fatigue_level, concentration_level, task_complexity
             FROM Survey_response
             ORDER BY timestamp DESC
             LIMIT ?
@@ -1241,17 +1244,18 @@ class Database:
         return cursor.fetchone()[0]
     
     def log_ml_prediction(self, features:dict, prediction:bool,
-                        coffidence:float,prob_class1:float, threshold_used:float,
+                        coffidence:float,probabilities:list, threshold_used:float,
                         adaptation_triggered:bool):
         """Логирует предсказание ML модели"""
         cursor = self.connection.cursor()
         features_json = json.dumps(features)
+        probs_json = json.dumps(probabilities)
         current_time = now()
         cursor.execute("""
-            INSERT INTO ml_predictions (timestamp, features, prediction, confidence, prob_class1, threshold_used, adaptation_triggered)
+            INSERT INTO ml_predictions (timestamp, features, prediction, confidence, probabilities, threshold_used, adaptation_triggered)
             values(?,?,?,?,?,?,?)
         """,
-            (current_time.strftime("%Y-%m-%d %H:%M:%S"), features_json, prediction, coffidence, prob_class1,  threshold_used, adaptation_triggered))
+            (current_time.strftime("%Y-%m-%d %H:%M:%S"), features_json, prediction, coffidence, probs_json,  threshold_used, adaptation_triggered))
         self.connection.commit()
 
     def stop_survey_scheduler(self):
@@ -1266,7 +1270,7 @@ class Database:
         if self.connection:
             self.connection.close()
 
-generate_data.py: 
+generate_data.py:
 import numpy as np
 import pandas as pd
 from scipy.integrate import solve_ivp
@@ -1277,12 +1281,12 @@ np.random.default_rng(seed=42)
 
 # ------------------------------------------------------------
 # Фиксированные индивидуальные параметры человека (из статьи)
-a_tilda = [0.0015, 0.0010, 0.045]   # ã₁, ã₂, ã₃
-b_tilda = [0.480, 0.033, 2.503]    # b̃₁, b̃₂, b̃₃
-k_tilda = [0.65, 0.480, 0.25]      # k̃₁, k̃₂, k̃₃
+a_tilda = [0.0015, 0.00162, 0.045]   # ã₁, ã₂, ã₃
+b_tilda = [0.480, 0.233, 4.1]    # b̃₁, b̃₂, b̃₃
+k_tilda = [0.65, 0.980, 0.2]      # k̃₁, k̃₂, k̃₃
 gamma_tilda = [0.025, 0.050, 0.02] # γ̃₁, γ̃₂, γ̃₃
 h_tilda = 0.89                     # h̃₁
-d = [0.0002, 0.0007, 0.07]         # d₁, d₂, d₃
+d = [0.0002, 0.007, 0.05]         # d₁, d₂, d₃
 c = [0.0015, 0.001, 0.010]        # c₁, c₂, c₃
 
 # Коэффициенты чувствительности для S(t) (можно настраивать)
@@ -1333,17 +1337,35 @@ def generate_survey_data(start_date, num_weeks):
     Генерирует опросы для num_weeks недель (пн–пт) и сохраняет в CSV.
     """
     data_rows = []
+    task_complexity_map = {}
     current_date = start_date
     # Ищем первый понедельник
     while current_date.weekday() != 0:
         current_date += timedelta(days=1)
     
-    # Временная сетка: с 9:00 до 19:00 с шагом 20 минут
-    t_start = 9.0
+    # Временная сетка: с 10:00 до 19:00 с шагом 20 минут
+    t_start = 10.0
     t_end = 19.0
-    dt_hours = 20/ 60.0   # 20 минут = 1/12 часа
-    t_eval = np.arange(t_start, t_end + dt_hours, dt_hours)
-    
+    step = 20/ 60.0   # 20 минут = 1/12 часа
+
+    # Время обеда (начало перерыва) – 14:00
+    lunch_time = 14.0
+    lunch_end = lunch_time + 1
+
+    # Создаём сетку через np.linspace, чтобы гарантировать попадание в границы
+    n_steps = int(round((t_end - t_start) / step)) + 1
+    t_eval = np.linspace(t_start, t_end, n_steps)
+
+    # Точки до обеда (включительно) и после обеда (исключая точку обеда, чтобы не дублировать)
+    t_before = t_eval[t_eval <= lunch_time]
+    t_after = t_eval[t_eval > lunch_end]
+
+
+    # Коэффициенты восстановления после обеда
+    recovery_W = 1.4   # работоспособность увеличивается на 25%
+    recovery_F = 0.6   # утомляемость снижается на 25%
+    recovery_E = 0.6   # ошибаемость снижается на 25%
+
     
     for week in range(num_weeks):
         for day_offset in range(5):   # пн–пт
@@ -1351,17 +1373,73 @@ def generate_survey_data(start_date, num_weeks):
             date = current_date + timedelta(days=day_offset)
             day_of_week = date.weekday()   # 0-4
             y0 = init_conditions[day_of_week]
-            
-            # Интегрируем систему
+            """
             sol = solve_ivp(system, t_span=(t_eval[0], t_eval[-1]), y0=y0, method='RK45',
                 t_eval=t_eval, args=(None,), rtol=1e-6, atol=1e-8)
             W_vals, F_vals, E_vals = sol.y[0], sol.y[1], sol.y[2]
+           """
+
+            # Интегрируем систему
+            # ---- ПЕРВЫЙ ЭТАП: до обеда ----
+            sol = solve_ivp(system, t_span=(t_start, lunch_time), y0=y0, method='RK45',
+                t_eval=t_before, args=(None,), rtol=1e-6, atol=1e-8)
+            
+            W1, F1, E1 = sol.y[0], sol.y[1], sol.y[2]
+            
+            # ---- КОРРЕКТИРОВКА после обеда ----
+            W_last = W1[-1]
+            F_last = F1[-1]
+            E_last = E1[-1]
+            W_new = min(1.0, W_last * recovery_W)      # не выше 1.0
+            F_new = max(0.0, F_last * recovery_F)      # не ниже 0.0
+            E_new = max(0.0, E_last * recovery_E)
+            y0_after = (W_new, F_new, E_new)
+            
+            # ---- ВТОРОЙ ЭТАП: после обеда ----
+            if len(t_after) > 0:
+                sol2 = solve_ivp(system, t_span=(lunch_end, t_end), y0=y0_after,
+                                 method='RK45', t_eval=t_after, args=(None,),
+                                 rtol=1e-6, atol=1e-8)
+                W2 = sol2.y[0]
+                F2 = sol2.y[1]
+                E2 = sol2.y[2]
+                # Объединяем результаты
+                W_vals = np.concatenate([W1, W2])
+                F_vals = np.concatenate([F1, F2])
+                E_vals = np.concatenate([E1, E2])
+                times = np.concatenate([t_before, t_after])
+            else:
+                times = t_before
+                W_vals, F_vals, E_vals = W1, F1, E1
+      
+                    
+            # Для каждого момента времени сохраняем опрос
+            hour_complexity = {}
+            for hour in range(10, 19):
+                # вероятность 0.4, 0.4,0.2
+                task_complexity = np.random.choice([0, 1, 2], p=[0.2, 0.5, 0.3])
+                hour_complexity[hour] = task_complexity
             
             # Для каждого момента времени сохраняем опрос
-            for i, t in enumerate(t_eval):
+            for i, t in enumerate(times):
+
+                # Если точка попадает в обед (ровно lunch_time) – пропускаем (оператор не работает)
+                if lunch_time <= t < lunch_end:
+                    continue
+
                 # Преобразуем F и E в fatigue и concentration
                 fatigue_raw = 1 + 9 * F_vals[i]
                 concentration_raw = 10 - 9 * E_vals[i]
+
+
+                if task_complexity == 0:
+                    fatigue_raw = fatigue_raw * 0.7
+                    concentration_raw = concentration_raw * 1.3
+
+                if task_complexity == 2:
+                    fatigue_raw = fatigue_raw * 1.2
+                    concentration_raw = concentration_raw * 0.8
+
                 # Добавляем шум (нормальный, σ=0.4)
                 fatigue_noisy = fatigue_raw + np.random.normal(-0.5, 0.4)
                 concentration_noisy = concentration_raw + np.random.normal(-0.5, 0.4)
@@ -1370,6 +1448,8 @@ def generate_survey_data(start_date, num_weeks):
                 
                 # Время в формате datetime
                 hour = int(t)
+                if hour not in hour_complexity:
+                    continue
                 minute = int(round((t - hour) * 60))
                 if minute == 60:
                     hour += 1
@@ -1386,7 +1466,8 @@ def generate_survey_data(start_date, num_weeks):
                     'concentration_level': concentration,
                     'hour_of_day': timestamp.hour,
                     'minute_of_hour': timestamp.minute,
-                    'day_of_week': day_of_week
+                    'day_of_week': day_of_week,
+                    'task_complexity': hour_complexity[hour]
                 })
         # Переход к следующей неделе
         current_date += timedelta(days=7)
@@ -1424,8 +1505,8 @@ def plot_survey_data(csv_path='survey_response.csv',week_offset = 0):
 
     # Подготовка данных
     df['time_hours'] = df['timestamp'].dt.hour + df['timestamp'].dt.minute / 60.0
-    # Ограничим время 9-19 часами
-    df = df[(df['time_hours'] >= 9) & (df['time_hours'] <= 19)]
+    # Ограничим время 10-19 часами
+    df = df[(df['time_hours'] >= 10) & (df['time_hours'] <= 19)]
 
     days = ['Понедельник', 'Вторник', 'Среда', 'Четверг', 'Пятница']
     fig, axes = plt.subplots(2, 3, figsize=(15, 10))
@@ -1448,13 +1529,13 @@ def plot_survey_data(csv_path='survey_response.csv',week_offset = 0):
             ax.set_xlabel('Время суток (часы)')
             ax.set_ylabel('Уровень (1-10)')
             ax.set_ylim(1, 10)
-            ax.set_xlim(9, 19)
+            ax.set_xlim(10, 19)
             ax.grid(True, linestyle='--', alpha=0.6)
             ax.legend(fontsize='small')
         else:
             ax.text(0.5, 0.5, 'Нет данных', ha='center', va='center', transform=ax.transAxes)
             ax.set_title(days[i])
-            ax.set_xlim(9, 19)
+            ax.set_xlim(10, 19)
 
     # 2. Шестой subplot – средние кривые по всем дням
     ax_avg = axes[5]
@@ -1474,7 +1555,7 @@ def plot_survey_data(csv_path='survey_response.csv',week_offset = 0):
     ax_avg.set_xlabel('Время суток (часы)')
     ax_avg.set_ylabel('Уровень (1-10)')
     ax_avg.set_ylim(1, 10)
-    ax_avg.set_xlim(9, 19)
+    ax_avg.set_xlim(10, 19)
     ax_avg.grid(True, linestyle='--', alpha=0.6)
     ax_avg.legend(fontsize='small')
 
@@ -1484,10 +1565,10 @@ def plot_survey_data(csv_path='survey_response.csv',week_offset = 0):
 # ------------------------------------------------------------
 if __name__ == "__main__":
     start = datetime(2026, 3, 2)   # 1 апреля 2026
-    generate_survey_data(start, num_weeks=6)
+    generate_survey_data(start, num_weeks=8)
     plot_survey_data('survey_response.csv')
 
-Gui_ui.ui:
+Gui_ui.py:
 # -*- coding: utf-8 -*-
 
 ################################################################################
@@ -2184,6 +2265,7 @@ import asyncio
 import threading
 from datetime import timedelta
 import logging
+import numpy as np
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -2231,7 +2313,9 @@ class MainWindow(QMainWindow):
         self.adaptation.apply_normal_style(self.ui, instant=True) #Стиль по умолчанию
 
         # Состояния
-        self.adaptive_mode = False
+        #self.full_adaptive_mode = False
+        #self.adaptive_mode = False
+        self.adaptation_level = 0
         self.survey_answered = False
         self.current_fatigue_level = 0
         self.current_confidence_level = 0
@@ -2254,6 +2338,12 @@ class MainWindow(QMainWindow):
 
         # Таймеры 
         self.setup_timers()
+
+        # Cложность задачи
+        self.current_task_complexity = 1
+        self._last_task_complexity = None
+        self.update_task_complexity() # установить согласно текущему часу
+       
 
         self.log_message(f"Startup time: {now().strftime('%H:%M:%S')}")
 
@@ -2399,6 +2489,7 @@ class MainWindow(QMainWindow):
         # ЗАпускаем в отдельных потоках
         self.robot_thread = self.robot_client.run_in_thread()
         self.ml_thread = self.ml_client.run_in_thread() 
+    
 
     @Slot()
     def show_control_page(self):
@@ -2483,7 +2574,7 @@ class MainWindow(QMainWindow):
             return
         
         # Сохраняем опрос в базу данных
-        self.db.save_survey(fatigue_level, concentration_level)
+        self.db.save_survey(fatigue_level, concentration_level, None)
 
         # Сохраняем опрос в лог
         self.db.log_command(
@@ -2543,7 +2634,14 @@ class MainWindow(QMainWindow):
         """Следующая проверка адаптации через 5 виртуальных минут."""
         self.next_ml_check_time = now() + timedelta(minutes=self.ml_check_interval)
         
-    
+    def update_task_complexity(self):
+        """Устанавливает сложность задачи для текущего часа (случайно)."""
+        # Генерируем с теми же весами, что и в generate_data: 0.4, 0.4, 0.2
+        complexity = np.random.choice([0, 1, 2], p=[0.4, 0.4, 0.2])
+        self.current_task_complexity = complexity
+        # Выводим в лог или интерфейс (опционально)
+        complexity_name = {0: "Легкая", 1: "Средняя", 2: "Сложная"}
+        self.log_message(f"Текущая сложность задачи: {complexity_name[complexity]}")
 
     @Slot()
     def show_survey_notification(self):
@@ -2564,8 +2662,13 @@ class MainWindow(QMainWindow):
     @Slot()
     def check_ml_adaptation(self):
         # Проверяем адаптацию ML
+        current_hour = now().hour
+        if not hasattr(self, '_last_complexity_hour') or current_hour != self._last_complexity_hour:
+            self.update_task_complexity()
+            self._last_complexity_hour = current_hour
+
         if hasattr(self, 'ml_client') and self.ml_client.running:
-            self.ml_client.get_prediction(future_minutes=20)
+            self.ml_client.get_prediction(future_minutes=20, task_complexity=int(self.current_task_complexity))
         
         self.db.log_command(
             source='main_app',
@@ -2658,15 +2761,21 @@ class MainWindow(QMainWindow):
         self.log_message("Robot disconnected")
     
     def on_ml_prediction(self, prediction):
-        requires_adaptation = prediction.get('requires_adaptation', False)
+        new_level = prediction.get('adaptation_level', 0)
         confidencce= prediction.get('confidence', 0.0)
         timestamp = prediction.get('timestamp')
-        self.ui.ML_prediction.append(f"ML prediction: timestamp={timestamp[11:16]}, requires_adaptation={requires_adaptation}, confidence={confidencce:.2f}")
-        logger.info(f"ML prediction: requires_adaptation={requires_adaptation}, confidence={confidencce:.2f}")
+        complexity = prediction.get('complexity')
+        self.ui.ML_prediction.append(f"ML prediction: timestamp={timestamp[11:16]}, level={new_level}, confidence={confidencce:.2f}, task_complexity={complexity}")
+        logger.info(f"ML prediction: requires_adaptation_level={new_level}, confidence={confidencce:.2f}")
 
-        if requires_adaptation and not self.adaptive_mode:
-            self.enable_adaptive_mode()
-        elif not requires_adaptation and self.adaptive_mode:
+        if new_level == self.adaptation_level:
+            return
+        
+        if new_level == 2:
+            self.enable_full_adaptive_mode() # интерфейс+робот
+        elif new_level == 1:
+            self.enable_interface_adaptive_mode() # интерфейс
+        elif new_level == 0:
             self.disable_adaptive_mode()
     
     def on_ml_error(self, error):
@@ -2680,19 +2789,34 @@ class MainWindow(QMainWindow):
         self.ui.Label_ML_status.setText(F" ML отключена")
         self.log_message("ML disconnected")
 
-    def enable_adaptive_mode(self):
-        self.adaptive_mode = True
-        self.log_message("Adaptive mode enabled")
+    def enable_full_adaptive_mode(self):
+        if self.adaptation_level == 2:
+            return
+        self.adaptation_level = 2
+        self.log_message("full adaptive mode enabled")
         self.ui.Label_adaptive_mode.setText(f" Адаптивный режим ВКЛ")
 
-        self.adaptation.apply_adaptive_style(self.ui)
-
+        self.adaptation.apply_adaptive_style(self.ui, instant=True)
         #Отправляем команду адаптацию робота
         if hasattr(self, 'robot_client') and self.robot_client.running:
             self.robot_client.send_command('set_adaptive_mode',enabled=True)
     
+    def enable_interface_adaptive_mode(self):
+        if self.adaptation_level == 1:
+            return
+        self.adaptation_level = 1
+        self.log_message("interface adaptive mode enabled")
+        self.ui.Label_adaptive_mode.setText(f" Адаптивный режим ВКЛ")
+
+        self.adaptation.apply_adaptive_style(self.ui)
+        #Отправляем команду роботу
+        if hasattr(self, 'robot_client') and self.robot_client.running:
+            self.robot_client.send_command('set_adaptive_mode', enabled=False)
+
     def disable_adaptive_mode(self):
-        self.adaptive_mode = False
+        if self.adaptation_level == 0:
+            return
+        self.adaptation_level = 0
         self.log_message("Adaptive mode disabled")
         self.ui.Label_adaptive_mode.setText(f" Адаптивный режим ВЫКЛ")
         self.adaptation.apply_normal_style(self.ui)
@@ -2746,6 +2870,7 @@ if __name__ == "__main__":
     main()
 
 main_simulation.py:
+
 import pybullet as p
 import pybullet_data
 import time
@@ -2789,12 +2914,12 @@ class KukaRobot:
         # Ограничения SSM зоны радиус
         self.ssm_zones= {
             'normal': {
-                'inner':2.5,
-                'outer':4
+                'inner':1.3,
+                'outer':2.2
             },
             'restricted': {
-                'inner':4, # 3 человек
-                'outer':6
+                'inner':1.6, # 3 человек
+                'outer':4.4
             }
         }
         self.current_ssm_mode = 'normal'
@@ -3300,9 +3425,11 @@ ml_model.py:
 import numpy as np
 import pickle
 import os
+import sklearn
 from typing import Tuple, Optional
 from sklearn.linear_model import LogisticRegression
-from sklearn.preprocessing import StandardScaler
+from sklearn.preprocessing import StandardScaler, OneHotEncoder
+from sklearn.compose import ColumnTransformer
 import logging
 
 from time_controller import now
@@ -3314,6 +3441,7 @@ class FatiguePredictor:
     def __init__(self, model_path: str = "fatigue_model.pkl"):
         self.model_path = model_path
         self.model: Optional[LogisticRegression] = None
+        self.classes_ = [0,1,2]  # 0 - не устал, 1 - устал, 2 - очень устал
         self.scaler = StandardScaler()
         self.confidence_threshold = 0.68 # Порог уверенности для адаптации
 
@@ -3323,109 +3451,117 @@ class FatiguePredictor:
             self.initialize_model()
             # Если модель не найдена, создаем новую
 
-    def _raw_features(self, hour: int, minute: int, day_of_week: int):
+    def _raw_features(self, hour: int, minute: int, day_of_week: int, task_complexity: int):
         #Час дня (преобразуем в циклические признаки
         hour_sin = np.sin(2 * np.pi * hour / 24)
         hour_cos = np.cos(2 * np.pi * hour / 24)
         minute_sin = np.sin(2 * np.pi * minute / 60)
         minute_cos = np.cos(2 * np.pi * minute / 60)
         # Количество часов с начала рабочего дня (предполагаем 9:00 начало)
-        hours_since_start = max(0, hour-9) + minute/60
-        # Послеобеденное время (после 13:00)
+        hours_since_start = max(0, hour-10) + minute/60
+        # Послеобеденное время (после 14:00)
         is_afternoon = 1 if hour >= 14 else 0.0
+        # one-hot кодирование сложности (3 категории)
+        comp_onehot = [0,0,0]
+        if task_complexity is None:
+            task_complexity = 1
+        weights = {0: 0.5, 1: 2.0, 2: 4.0}
+        comp_onehot[task_complexity] = weights[task_complexity]
 
-        return np.array([hour_sin, hour_cos, minute_sin, minute_cos, day_of_week, hours_since_start, is_afternoon])
+
+        return np.array([hour_sin, hour_cos, minute_sin, minute_cos, day_of_week, hours_since_start, is_afternoon]+ comp_onehot)
 
 
-    def extract_features(self, timestamp: None) -> np.ndarray:
+    def extract_features(self, timestamp: None, task_complexity: int) -> np.ndarray:
         #"""Извлекает признаки из времени"""
         if timestamp is None:
             timestamp = now()
         day_of_week = timestamp.weekday() # 0=понедельник, 6=воскресенье
         hour = timestamp.hour
         minute = timestamp.minute
-        return self._raw_features(hour, minute, day_of_week)
+        return self._raw_features(hour, minute, day_of_week, task_complexity)
 
     
     def initialize_model(self):
         """Инициализирует новую модель с начальными данными"""
+        
         # Начальные фиктивные данные для инициализации
         X_synth, y_synth = [], []
-
-        # Генерируем примеры для будних дней с 8 до 19
-        for hour in range(8, 20):
+        # Генерируем примеры для будних дней с 10 до 19
+        for hour in range(10, 20):
             for day in range(5): # Пятница
-                X_synth.append(self._raw_features(hour, 0, day))
-                y_synth.append(1 if hour >= 17 else 0)
+                for comp in [0,1,2]:
+                    X_synth.append(self._raw_features(hour, 0, day, comp))
+                    if hour >= 16:
+                        y_synth.append(2) # очень устал
+                    elif hour >= 13:
+                        y_synth.append(1) # устал
+                    else:
+                        y_synth.append(0) # не устал
         X_synth = np.array(X_synth)
         y_synth = np.array(y_synth)
+        self.scaler.fit(X_synth)
+        X_synth = self.scaler.transform(X_synth)
 
         # Обучаем scaler и модель
-        self.scaler.fit(X_synth)
-        X_scaled = self.scaler.fit_transform(X_synth)
-        self.model = LogisticRegression(C=1)
-        self.model.fit(X_scaled, y_synth)
+        self.model = LogisticRegression(solver='lbfgs', max_iter=1000, C=1.0)
+        self.model.fit(X_synth, y_synth)
+        logger.info(f"Model classes: {self.model.classes_}")   # должно быть [0 1 2])    
         self.save_model()
         logger.info("Initial model created with synthetic data")
 
 
-    def predict(self, timestamp: None) -> Tuple[bool,float]:
+    def predict(self, timestamp: None, task_complexity: int) -> Tuple[bool,float]:
         """Предсказывает усталость и возвращает предсказание и уверенность"""
-        if self.model is None:
-            return False, 0.0
+        """
+        Возвращает:
+          predicted_class : int (0,1,2)
+          confidence       : float (вероятность предсказанного класса)
+          proba            : list[float] вероятности для классов [0,1,2]
+        """
+
         if timestamp is None:
             timestamp = now()
 
-        features = self.extract_features(timestamp).reshape(1,-1)
+        features = self.extract_features(timestamp, task_complexity).reshape(1,-1)
         features_scaled = self.scaler.transform(features)
 
-        prob_class1 = self.model.predict_proba(features_scaled)[0,1]
-        prob_class0 = 1 - prob_class1
-        prediction =  prob_class1 > self.confidence_threshold
-        # Уверенность_prediction в принятом решении
-        if prediction:
-            confidence = prob_class1  # уверен, что устал
-        else:
-            confidence = prob_class0  # уверен, что не устал
-        return prediction,  confidence, prob_class1
+        proba = self.model.predict_proba(features_scaled)[0]
+        pred_class = np.argmax(proba)
+        confidence = proba[pred_class]
+        
+        return pred_class,  confidence, proba
     
-    def train(self, X: np.ndarray, y: np.ndarray):
+    def get_adaptation_level(self, pred_class):
+        """0 - нет адаптации, 1 - только интерфейс, 2 - интерфейс+робот"""
+        if pred_class == 2:
+            return 2
+        elif pred_class == 1:
+            return 1
+        else:
+            return 0
+    
+    def train(self, X, y):
         """Дообучает модель на новых данных"""
+        """
+        X: список массивов признаков (каждый получен через extract_features)
+        y: список меток классов (0,1,2)
+        """
         if self.model is None:
             self.initialize_model()
-        
+        X = np.array(X)
+        y = np.array(y)
         self.scaler.fit(X)
         X_scaled = self.scaler.transform(X)
         self.model.fit(X_scaled, y)
-        accuracy = self.model.score(X_scaled, y)
+        logger.info(f"Model classes: {self.model.classes_}")   # должно быть [0 1 2])    
         self.save_model()
-       
-        from sklearn.model_selection import train_test_split
-        from sklearn.metrics import accuracy_score
-
-        X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.3, random_state=0, stratify=y)
-
-        from sklearn.preprocessing import StandardScaler
-
-        sc = StandardScaler()
-
-        sc.fit(X_train)
-
-        X_train_std = sc.transform(X_train)
-        X_test_std = sc.transform(X_test)
-
-
-        lr =LogisticRegression(C=1)
-        lr.fit(X_train_std, y_train)
-        y_pred_lr = lr.predict(X_test_std)
-
-        print('\nЧисло ошибочно классифицированных образов: ', str((y_test != y_pred_lr).sum()))
-        print("\nсреднее количество ошибочных классификаций на тренировочных данных:","{:.4f}".format(np.mean(y_train != lr.predict(X_train_std))))
-        print("\nсреднее количество ошибочных классификаций на тестовых данных:", "{:.4f}".format(np.mean(y_test != y_pred_lr)))
-        print('\nВерность: %.2f' % accuracy_score(y_test, y_pred_lr))
-        
-        logger.info(f"Model accuracy: {accuracy}")
+    
+        from sklearn.metrics import accuracy_score#
+        y_pred = self.model.predict(X_scaled)
+        accuracy = accuracy_score(y, y_pred)
         return accuracy
+
     
     def save_model(self):
         """Сохраняет модель и скейлер"""
@@ -3449,345 +3585,6 @@ class FatiguePredictor:
         except Exception as e:
             logger.error(f"Failed to load model: {e}")
             self.initialize_model()
-
-plot_ml_results.py:
-import sqlite3
-import pickle
-import numpy as np
-import matplotlib.pyplot as plt
-import pandas as pd
-from sklearn.metrics import confusion_matrix, ConfusionMatrixDisplay
-from sklearn.preprocessing import StandardScaler
-from sklearn.linear_model import LogisticRegression
-from datetime import datetime
-from database import Database
-from ml_model import FatiguePredictor
-
-# ----------------------------------------------------------------------
-# 1. Загрузка модели
-def load_model(model_path="fatigue_model.pkl"):
-    with open(model_path, "rb") as f:
-        data = pickle.load(f)
-    return data['model'], data['scaler']
-
-# ----------------------------------------------------------------------
-"""
-# 2. Загрузка данных из БД и формирование X, y, timestamps
-def load_data_from_db(db, limit=10000):
-    rows = db.get_training_data(limit=limit)
-    if not rows:
-        return None, None, None
-    predictor = FatiguePredictor()
-    X_list = []
-    y_list = []
-    timestamps = []
-    for row in rows:
-        # row: (timestamp, fatigue, concentration) или больше полей
-        if len(row) == 3:
-            ts_str, fatigue, concentration = row
-            dt = datetime.fromisoformat(ts_str)
-        else:
-            # если get_training_data возвращает больше полей (например, с минутами)
-            ts_str = row[0]
-            fatigue = row[4] if len(row) > 4 else row[1]
-            concentration = row[5] if len(row) > 5 else row[2]
-            dt = datetime.fromisoformat(ts_str)
-        features = predictor.extract_features(dt)
-        target = 1 if (fatigue >= 6 and concentration <= 4) else 0
-        X_list.append(features)
-        y_list.append(target)
-        timestamps.append(dt)
-    return np.array(X_list), np.array(y_list), timestamps
-"""
-# ----------------------------------------------------------------------
-# 3. График динамики вероятности по времени (хронология)
-def plot_prediction_over_time(db, threshold=0.68):
-    import sqlite3
-    import pandas as pd
-    import numpy as np
-    import matplotlib.pyplot as plt
-
-    conn = sqlite3.connect(db.db)
-    query = "SELECT timestamp, prob_class1 FROM ml_predictions ORDER BY timestamp"
-    df = pd.read_sql_query(query, conn)
-    conn.close()
-    if df.empty:
-        print("Нет данных в ml_predictions")
-        return
-
-    df['timestamp'] = pd.to_datetime(df['timestamp'])
-    df['day_of_week'] = df['timestamp'].dt.weekday
-    df['time_hours'] = df['timestamp'].dt.hour + df['timestamp'].dt.minute / 60.0
-    df = df[(df['day_of_week'].isin([0,1,2,3,4])) & (df['time_hours'] >= 9) & (df['time_hours'] <= 19)]
-
-    days = ['Понедельник', 'Вторник', 'Среда', 'Четверг', 'Пятница']
-    fig, axes = plt.subplots(2, 3, figsize=(15, 10))
-    axes = axes.flatten()
-
-    for i, day_idx in enumerate(range(5)):
-        ax = axes[i]
-        day_data = df[df['day_of_week'] == day_idx].copy()
-        if not day_data.empty:
-            day_data = day_data.sort_values('time_hours')
-            
-            ax.plot(day_data['time_hours'], day_data['prob_class1'], 'o', alpha=0.4, markersize=4, label='Вероятность усталости')
-            ax.plot(day_data['time_hours'], day_data['prob_class1'], 'r-', linewidth=1, label='Кривая prob_class1')
-            ax.set_title(days[i])
-            ax.set_xlabel('Время суток (часы)')
-            ax.set_ylabel('Вероятность усталости')
-            ax.set_ylim(0, 1)
-            ax.set_xlim(9, 19)
-            ax.axhline(y=0.68, color='blue', linestyle='--', linewidth=1.5, label='Порог 0.68')
-            ax.grid(True, linestyle='--', alpha=0.6)
-            ax.legend(fontsize='small')
-        else:
-            ax.text(0.5, 0.5, 'Нет данных', ha='center', va='center', transform=ax.transAxes)
-            ax.set_title(days[i])
-            ax.set_xlim(9, 19)
-
-    # Шестой subplot – средняя кривая
-    ax_avg = axes[5]
-    df['time_bin'] = np.round(df['time_hours'] * 10) / 10.0
-    avg_data = df.groupby('time_bin')['prob_class1'].mean().reset_index()
-    avg_data = avg_data.sort_values('time_bin')
-    avg_data['prob_smooth'] = avg_data['prob_class1'].rolling(window=3, center=True).mean()
-    ax_avg.plot(avg_data['time_bin'], avg_data['prob_class1'], 'o', alpha=0.4, markersize=3, label='Средняя по интервалам')
-    ax_avg.plot(avg_data['time_bin'], avg_data['prob_smooth'], 'g-', linewidth=2, label='Сглаженная средняя')
-    ax_avg.axhline(y=0.68, color='red', linestyle='--', linewidth=1.5, label='Порог 0.68')
-    ax_avg.set_title('Средняя за смену (все дни)')
-    ax_avg.set_xlabel('Время суток (часы)')
-    ax_avg.set_ylabel('Вероятность усталости')
-    ax_avg.set_ylim(0, 1)
-    ax_avg.set_xlim(9, 19)
-    ax_avg.grid(True, linestyle='--', alpha=0.6)
-    ax_avg.legend(fontsize='small')
-
-    plt.tight_layout()
-    
-    
-# ----------------------------------------------------------------------
-# 4. График средней вероятности по часам рабочего дня
-def plot_hourly_avg_probability(timestamps, y_prob):
-    df = pd.DataFrame({
-        'timestamp': timestamps,
-        'probability': y_prob
-    })
-    df['hour'] = df['timestamp'].dt.hour
-    hourly_avg = df.groupby('hour')['probability'].mean().reset_index()
-    hourly_avg = hourly_avg[(hourly_avg['hour'] >= 9) & (hourly_avg['hour'] <= 19)]
-    plt.figure(2, figsize=(10, 6))
-    plt.plot(hourly_avg['hour'], hourly_avg['probability'],
-             marker='o', linestyle='-', linewidth=2, markersize=6,
-             label='Средняя вероятность усталости')
-    plt.axhline(y=0.68, color='r', linestyle='--', label='Порог адаптации (0.68)')
-    plt.xlabel('Часы рабочей смены (9:00 - 19:00)')
-    plt.ylabel('Вероятность усталости')
-    plt.title('Динамика средней вероятности усталости оператора в течение дня')
-    plt.legend()
-    plt.grid(True, linestyle='--', alpha=0.6)
-    plt.xticks(range(9, 19, 1))
-    plt.ylim(0, 1)
-    plt.tight_layout()
-
-# ----------------------------------------------------------------------
-# 5. График работоспособности (на основе fatigue_level)
-def plot_fatigue_trend(db):
-    """
-    Строит 5 subplot'ов (пн–пт) с динамикой работоспособности.
-    По оси X – время суток (часы + минуты/60), по Y – alertness.
-    Используется скользящее среднее (окно 3) для сглаживания.
-    """
-    import sqlite3
-    import pandas as pd
-    import matplotlib.pyplot as plt
-
-    # Загружаем данные
-    conn = sqlite3.connect(db.db)
-    query = """
-        SELECT timestamp, fatigue_level, day_of_week
-        FROM survey_response
-        ORDER BY timestamp
-    """
-    df = pd.read_sql_query(query, conn)
-    conn.close()
-    if df.empty:
-        print("Нет данных для графика по дням недели.")
-        return
-
-    # Подготовка данных
-    df['timestamp'] = pd.to_datetime(df['timestamp'])
-    df['alertness'] = (10 - df['fatigue_level']) / 9.0
-    df['time_hours'] = df['timestamp'].dt.hour + df['timestamp'].dt.minute / 60.0
-    # Фильтрация опросов по времени суток (оставить только с 9:00 до 19:00)
-    df = df[(df['time_hours'] >= 9) & (df['time_hours'] <= 19)]
-    # Названия дней (индексы: 0=пн,1=вт,2=ср,3=чт,4=пт)
-    days = ['Понедельник', 'Вторник', 'Среда', 'Четверг', 'Пятница']
-    fig, axes = plt.subplots(2, 3, figsize=(15, 10))
-    axes = axes.flatten()
-
-    # --- 1. Строим графики для каждого рабочего дня (пн–пт) ---
-    for i, day_idx in enumerate(range(5)):
-        ax = axes[i]
-        day_data = df[df['day_of_week'] == day_idx].copy()
-        if not day_data.empty:
-            day_data = day_data.sort_values('time_hours')
-            # Скользящее среднее с окном 3 (центрированное)
-            day_data['alertness_smooth'] = day_data['alertness'].rolling(window=3, center=True).mean()
-            # Отдельные точки
-            ax.plot(day_data['time_hours'], day_data['alertness'], 'o', alpha=0.4, markersize=4, label='Опросы')
-            # Сглаженная линия (только не-NaN значения)
-            ax.plot(day_data['time_hours'], day_data['alertness_smooth'], 'r-', linewidth=2, label='Сглаженный тренд')
-            # Добавляем затенённую область обеда
-            ax.axvspan(14.5, 15.0, alpha=0.2, color='orange', label='Обеденный перерыв')
-            ax.axhline(y=5/9, color='orange', linestyle=':', linewidth=1.5, label='Усталость = 5')
-            ax.set_title(days[i])
-            ax.set_xlabel('Время суток (часы)')
-            ax.set_ylabel('Работоспособность')
-            ax.set_ylim(0, 1)
-            ax.set_xlim(9, 19)
-            ax.grid(True, linestyle='--', alpha=0.6)
-            ax.legend(fontsize='small')
-        else:
-            ax.text(0.5, 0.5, 'Нет данных', ha='center', va='center', transform=ax.transAxes)
-            ax.set_title(days[i])
-
-    # --- 2. Шестой subplot – средняя кривая за смену по всем данным --
-    ax_avg = axes[5]
-    # Группируем по времени суток с шагом 0.1 часа (6 минут) и вычисляем среднюю alertness
-    # Округляем time_hours до 0.1 для группировки
-    df['time_bin'] = np.round(df['time_hours'] * 10) / 10.0
-    avg_data = df.groupby('time_bin')['alertness'].mean().reset_index()
-    avg_data = avg_data.sort_values('time_bin')
-    # Сглаживание скользящим окном (окно 3, центрированное)
-    avg_data['alertness_smooth'] = avg_data['alertness'].rolling(window=3, center=True).mean()
-    # Строим точки и линию
-    ax_avg.plot(avg_data['time_bin'], avg_data['alertness'], 'o', alpha=0.4, markersize=3, label='Средние по интервалам')
-    ax_avg.plot(avg_data['time_bin'], avg_data['alertness_smooth'], 'g-', linewidth=2, label='Сглаженная средняя')
-    ax_avg.axvspan(14.5, 15.0, alpha=0.2, color='orange', label='Обеденный перерыв')
-    ax_avg.axhline(y=5/9, color='orange', linestyle=':', linewidth=1.5, label='Усталость = 5')
-    ax_avg.set_title('Средняя за смену (все дни)')
-    ax_avg.set_xlabel('Время суток (часы)')
-    ax_avg.set_ylabel('Работоспособность')
-    ax_avg.set_ylim(0, 1)
-    ax_avg.set_xlim(9, 19)
-    ax_avg.grid(True, linestyle='--', alpha=0.6)
-    ax_avg.legend(fontsize='small')
-
-
-    plt.tight_layout()
-
-def plot_fatigue_concentration_decision(db):
-    """
-    Строит границу решения логистической регрессии,
-    обученной на двух признаках: fatigue_level и concentration_level.
-    """
-    import sqlite3
-    import numpy as np
-    import matplotlib.pyplot as plt
-    from sklearn.linear_model import LogisticRegression
-    from sklearn.preprocessing import StandardScaler
-
-    # Загружаем данные из БД
-    conn = sqlite3.connect(db.db)
-    query = """
-        SELECT fatigue_level, concentration_level
-        FROM survey_response
-        WHERE fatigue_level IS NOT NULL AND concentration_level IS NOT NULL
-    """
-    data = pd.read_sql_query(query, conn)
-    conn.close()
-    if data.empty:
-        print("Нет данных для графика усталость vs концентрация.")
-        return
-
-    # Формируем признаки X (fatigue, concentration) и целевую переменную y
-    X_fc = data[['fatigue_level', 'concentration_level']].values
-    # Цель: устал если fatigue >= 5 и concentration <= 4 (как в вашей модели)
-    y_fc = ((data['fatigue_level'] >= 5) & (data['concentration_level'] <= 4)).astype(int)
-
-    # Масштабируем признаки
-    scaler_fc = StandardScaler()
-    X_scaled_fc = scaler_fc.fit_transform(X_fc)
-
-    # Обучаем логистическую регрессию
-    model_fc = LogisticRegression(C=1)
-    model_fc.fit(X_scaled_fc, y_fc)
-
-    # Строим границу решения
-    plt.figure(4,figsize=(8, 6))
-    # Используем уже имеющуюся функцию plot_decision_regions
-    plot_decision_regions(X_scaled_fc, y_fc, model_fc, resolution=0.05)
-    plt.xlabel('Усталость (fatigue_level, масштабированная)')
-    plt.ylabel('Концентрация (concentration_level, масштабированная)')
-    plt.title('Граница решения: усталость vs концентрация')
-    plt.legend()
-    plt.tight_layout()
-    plt.show()
-
-# ----------------------------------------------------------------------
-# 6. Вспомогательная функция для границы решения (оставлена как в оригинале)
-def plot_decision_regions(X, y, classifier, resolution=0.02):
-    from matplotlib.colors import ListedColormap
-    markers = ('s', 'x', 'o', '^', 'v')
-    colors = ('red', 'blue', 'lightgreen', 'gray', 'cyan')
-    cmap = ListedColormap(colors[:len(np.unique(y))])
-    x1_min, x1_max = X[:, 0].min() - 1, X[:, 0].max() + 1
-    x2_min, x2_max = X[:, 1].min() - 1, X[:, 1].max() + 1
-    xx1, xx2 = np.meshgrid(np.arange(x1_min, x1_max, resolution),
-                           np.arange(x2_min, x2_max, resolution))
-    Z = classifier.predict(np.array([xx1.ravel(), xx2.ravel()]).T)
-    Z = Z.reshape(xx1.shape)
-    plt.contourf(xx1, xx2, Z, alpha=0.4, cmap=cmap)
-    plt.xlim(xx1.min(), xx1.max())
-    plt.ylim(xx2.min(), xx2.max())
-    for idx, cl in enumerate(np.unique(y)):
-        plt.scatter(x=X[y == cl, 0], y=X[y == cl, 1],
-                    alpha=0.8, c=colors[idx], edgecolor='black',
-                    marker=markers[idx], label=cl)
-
-# ----------------------------------------------------------------------
-def main():
-    db = Database()
-    """
-    X, y, timestamps = load_data_from_db(db, limit=10000)
-    if X is None:
-        print("Нет данных в БД. Сначала соберите опросы.")
-        return
-    
-
-    model, scaler = load_model()
-    X_scaled = scaler.transform(X)
-    y_prob = model.predict_proba(X_scaled)[:, 1]
-    """
-
-    # График 1: динамика вероятности по времени
-    plot_prediction_over_time(db)
-
-    # График 2: средняя вероятность по часам
-    #plot_hourly_avg_probability(timestamps, y_prob)
-
-    # График 3: работоспособность (fatigue trend)
-    plot_fatigue_trend(db)
-
-    # ------------------------------------------------------------------
-    # Закомментированные графики (матрица ошибок, граница решения)
-    # оставлены как в исходном коде
-    """
-    # 4. График 2: матрица ошибок
-    y_pred = model.predict(X_scaled)
-    cm = confusion_matrix(y, y_pred)
-    disp = ConfusionMatrixDisplay(confusion_matrix=cm, display_labels=['Не устал', 'Устал'])
-    plt.figure(3)
-    disp.plot(ax=plt.gca())
-    plt.title('Матрица ошибок')
-    """
-    # 5. График 3: граница решения для двух признаков (hour_sin, hours_since_start)
-    #plot_fatigue_concentration_decision(db)
-    plt.show()
-
-if __name__ == "__main__":
-    main()
-
 server__ML.py:
 import asyncio
 import websockets
@@ -3828,6 +3625,7 @@ class MLServer:
 
                     if command == 'predict':
                         timestamp_str = data.get('timestamp')
+                        task_complexity = data.get('task_complexity', 1) # по умолчанию 1 (средняя)
                         if timestamp_str:
                             try:
                                 from datetime import datetime
@@ -3837,15 +3635,16 @@ class MLServer:
                         else:
                             timestamp = now()
                          
-                        prediction, confidence, prob_class1  = self.model.predict(timestamp)
-                        
+                        pred_class, confidence, proba  = self.model.predict(timestamp, task_complexity)
+                        adaptation_level = self.model.get_adaptation_level(pred_class)
                         response = {
                             'type': 'prediction',
-                            'prediction': bool(prediction),
+                            'prediction_class': int(pred_class),
                             'confidence': float(confidence),
-                            'prob_class1': float(prob_class1),
-                            'threshold_used': float(self.model.confidence_threshold),
-                            'requires_adaptation': bool(prob_class1 > self.model.confidence_threshold),
+                            'probabilities': [float(p) for p in proba],
+                            #'threshold_used': float(self.model.confidence_threshold),
+                            'adaptation_level': self.model.get_adaptation_level(pred_class),
+                            'complexity': task_complexity,
                             'timestamp': timestamp.isoformat()
                         }
 
@@ -3853,7 +3652,7 @@ class MLServer:
                         self.db.log_command(
                             source="server_ml",
                             command="predict_result",
-                            parameters= f"timestamp_predict: {timestamp}, prediction: {prediction}, confidence: {confidence:.2f}, prob_class1: {prob_class1:.2f}",
+                            parameters= f"timestamp_predict: {timestamp}, prediction_class: {pred_class}, confidence: {confidence:.2f}, probabilities: [{proba[0]:.2f}, {proba[1]:.2f}, {proba[2]:.2f}]",
                             success=True
                         )
 
@@ -3923,12 +3722,23 @@ class MLServer:
                         timestamp = datetime.fromisoformat(timestamp_str)
                     except:
                         continue
-                    X.append(self.model.extract_features(timestamp))
+                    
                     fatigue_level = row['fatigue_level']
                     concentration_level = row['concentration_level']
-                    # Цель: устал если усталость >=5 и концентрация <=4
-                    target = 1 if (fatigue_level >= 5 and concentration_level <= 4) else 0
+                    task_complexity = row['task_complexity']
+
+                    
+                    X.append(self.model.extract_features(timestamp,task_complexity))
+                    
+                    # Трёхклассовая цель
+                    if fatigue_level >= 7 and concentration_level <= 4:
+                        target = 2
+                    elif 5 <= fatigue_level <= 7 and 4 <= concentration_level <= 7:
+                        target = 1
+                    else:
+                        target = 0
                     y.append(target)
+
                 if len(X)>0:
                     X = np.array(X)
                     y = np.array(y)
@@ -3984,6 +3794,235 @@ async def main():
 
 if __name__ == "__main__":
     asyncio.run(main())
+
+server_pybullet.py:
+import asyncio
+import websockets
+import json
+import time
+from threading import Thread
+import logging
+
+from main_simulation import KukaRobot
+from database import Database
+from time_controller import now
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+class PybulletServer:
+    def __init__(self, host="localhost", port=8765):
+        self.host = host
+        self.port = port
+        self.robot = KukaRobot(gui=True)
+        self.robot.connect()
+        self.db = Database()
+        self.adaptive_mode = False
+        self.clients = set()
+
+    async def register(self,websocket):
+        self.clients.add(websocket)
+        print(f"New client: {websocket.remote_address}")
+    
+    async def unregister(self,websocket):
+        self.clients.remove(websocket)
+        print(f"Client disconnected: {websocket.remote_address}")
+
+    
+    async def broadcast_positions(self):
+        """Передает текущие позиции суставов"""
+        while True:
+            try:
+                positions = self.robot.get_joint_positions()
+                message = {
+                    'type': 'positions',
+                    'JointPositions': positions.get('JointPositions'),
+                    'FramePositions': positions.get('FramePositions'),
+                    'End_effector_Orientation': positions.get('End_effector_Orientation'),
+                    'timestamp': time.time(),
+                    'virtual_time': now().isoformat(),
+                    'adaptive_mode': self.adaptive_mode,
+                    'speed_factor': positions.get('velosity')
+                }
+                
+
+                self.db.save_telemetry(
+                    positions=f'joint_positions:{positions.get('JointPositions')}, frame_positions:{positions.get("FramePositions")}, end_effector_orientation:{positions.get("End_effector_Orientation")}',
+                    velocity=positions.get('velosity'),
+                    adaptive_mode=self.adaptive_mode
+                )
+                try:
+                    await asyncio.gather(
+                        *[asyncio.create_task(client.send(json.dumps(message))) for client in self.clients]
+                    )
+                    
+                except Exception as e:
+                    logger.error(f"Error while broadcasting positions: {e}")
+                    
+                await asyncio.sleep(0.1)
+            except Exception as e:
+                logger.error(f"Error while broadcasting positions: {e}")
+                break
+
+    async def handle_client(self,websocket):
+        await self.register(websocket)
+        client_address = websocket.remote_address
+        logger.info(f"Client connected: {client_address}")
+        try:
+            async for message in websocket:
+                await self.process_message(websocket,message)
+        except Exception as e:
+            logger.error(f"Error while handling client: {e}")
+        except websockets.exceptions.ConnectionClosed:
+            logger.info(f"Client disconnected: {client_address}")
+
+    async def process_message(self,websocket,message):
+        try:
+            data = json.loads(message)
+            command = data.get('command')
+            
+            self.db.log_command(
+                "response_pybullet_server", 
+                command, 
+                json.dumps(data), 
+                True
+            )
+            response=None
+            
+            if command == 'move_joint':
+                joint = data.get('joint')
+                direction = data.get('direction')
+                step = data.get('step', 0.1)
+                success,log_msg = self.robot.move_joint(joint,direction,step)
+
+                response={
+                    'type': 'command_response',
+                    'command':'move_joint',
+                    'success': success,
+                    'message': log_msg,
+                    'timestamp': now().strftime("%d %H:%M:%S")
+                }
+
+            elif command == 'reset_positions':
+                self.robot.reset_positions()
+                response={
+                    'type': 'command_response',
+                    'command':'reset_positions',
+                    'success': True,
+                    'message': 'Positions have been reset',
+                    'timestamp': now().strftime("%d %H:%M:%S")
+                }
+            
+            elif command == 'start_automatic_mode':
+                points = data.get('points')
+                orientations = data.get('orientations', None)
+                loop = data.get('loop_programming', False)
+                success,log_msg = self.robot.start_automatic_mode(points, orientations, loop)
+                response={
+                    'type': 'command_response',
+                    'command':'start_automatic',
+                    'success': success,
+                    'message': log_msg,
+                    'point_count': len(points),
+                    'timestamp': now().strftime("%d %H:%M:%S")
+                }
+            
+            elif command == 'stop_automatic_mode':
+                self.robot.automatic_mode = False
+                success,log_msg = self.robot.stop_automatic_mode()
+                response={
+                    'type': 'command_response',
+                    'command':'stop_automatic',
+                    'success': success,
+                    'message': log_msg,
+                    'timestamp': now().strftime("%d %H:%M:%S")
+                }
+                
+            elif command == 'set_adaptive_mode':
+                self.adaptive_mode = data.get('enabled', False)
+                self.robot.set_adaptive_mode(self.adaptive_mode, 'adaptive' if self.adaptive_mode else 'full')
+                response={
+                    'type': 'command_response',
+                    'command':'set_adaptive_mode',
+                    'success': True,
+                    'message': 'Robot adaptive mode changed',
+                    'adaptive_mode': self.adaptive_mode,
+                    'timestamp': now().strftime("%d %H:%M:%S")
+                }
+                
+                logger.info(f"Adaptive mode: {self.adaptive_mode}, Speed mode: {'adaptive' if self.adaptive_mode else 'full'}")
+                
+                
+            else:
+                response={
+                    'type': 'error',
+                    'message': 'Unknown command',
+                    'timestamp': now().strftime("%d %H:%M:%S")
+                }
+            
+            await websocket.send(json.dumps(response))
+                
+            
+            logger.info(f"Sedding response: {response}")
+            self.db.log_command(
+                "send_pybullet_server",
+                response.get('command'), 
+                json.dumps(response), 
+                True
+            )
+            
+        except json.JSONDecodeError:
+            await websocket.send(json.dumps({
+                'type': 'error',
+                'message': 'Invalid JSON format'
+            }))
+        except Exception as e:
+            await websocket.send(json.dumps({
+                'type': 'error',
+                'message': str(e)
+            }))
+
+    
+    async def start_server(self):
+        async with websockets.serve(self.handle_client, self.host, self.port):
+            logger.info(f"Server started on {self.host}:{self.port}")
+            
+            self.broadcast_task = asyncio.create_task(self.broadcast_positions())
+            await asyncio.Future()
+
+    def run(self):
+        asyncio.run(self.start_server())
+
+    def run_in_thread(self):
+        thread = Thread(target=self.run , daemon=True)
+        thread.start()
+        return thread
+
+    def stop(self):
+        """Остановка сервера"""
+        logger.info("Остановка сервера PyBullet...")
+        self.running = False
+        self.db.close()
+        if self.broadcast_task and not self.broadcast_task.done():
+            self.broadcast_task.cancel()
+        
+        if hasattr(self, 'robot') and self.robot:
+            self.robot.disconnect()
+    
+if __name__ == "__main__":
+    server = PybulletServer()
+    
+    try:
+    # Запускаем сервер в отдельном потоке
+        server_thread = server.run_in_thread()
+    
+        # Основной поток ждет завершения
+        while True:
+            time.sleep(1)
+        
+    except KeyboardInterrupt:
+        logger.info("Получен сигнал KeyboardInterrupt")
+        server.stop()
 
 time_controller.py:
 # time_controller.py
@@ -4224,6 +4263,7 @@ def today() -> dt.date:
     return time_controller.now().date()
 
 time_master.py:
+
 # time_master.py
 """
 Отдельный скрипт для управления временем во всём проекте.

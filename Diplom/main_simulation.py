@@ -41,12 +41,12 @@ class KukaRobot:
         # Ограничения SSM зоны радиус
         self.ssm_zones= {
             'normal': {
-                'inner':2.5,
-                'outer':4
+                'inner':1.3,
+                'outer':2.2
             },
             'restricted': {
-                'inner':4, # 3 человек
-                'outer':6
+                'inner':1.6, # 3 человек
+                'outer':4.4
             }
         }
         self.current_ssm_mode = 'normal'

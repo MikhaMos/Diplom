@@ -143,9 +143,9 @@ class MLServer:
                     X.append(self.model.extract_features(timestamp,task_complexity))
                     
                     # Трёхклассовая цель
-                    if fatigue_level >= 6 and concentration_level <= 3:
+                    if fatigue_level >= 7 and concentration_level <= 4:
                         target = 2
-                    elif 4 <= fatigue_level <= 6 and 4 <= concentration_level <= 5:
+                    elif 5 <= fatigue_level <= 7 and 4 <= concentration_level <= 7:
                         target = 1
                     else:
                         target = 0

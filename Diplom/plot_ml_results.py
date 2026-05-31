@@ -317,9 +317,9 @@ def prepare_multiclass_data(db, limit=10000):
         dt = datetime.fromisoformat(ts_str)
         features = predictor.extract_features(dt, complexity)  # теперь с параметром сложности
         # Целевая метка (по правилам, использованным при обучении)
-        if fatigue >= 7 and concentration <= 3:
+        if fatigue >= 7 and concentration <= 4:
             target = 2
-        elif 4 <= fatigue <= 6 and 4 <= concentration <= 5:
+        elif 5 <= fatigue <= 7 and 4 <= concentration <= 7:
             target = 1
         else:
             target = 0
@@ -349,7 +349,7 @@ def evaluate_multiclass_model(X, y, model=None, test_size=0.3, random_state=42):
     X_test_scaled = scaler.transform(X_test)
 
     if model is None:
-        model = LogisticRegression(solver='lbfgs', max_iter=1000, C=1.0)
+        model = LogisticRegression(solver='lbfgs', max_iter=1000, C=0.10)
     model.fit(X_train_scaled, y_train)
     y_pred = model.predict(X_test_scaled)
     y_proba = model.predict_proba(X_test_scaled)
@@ -597,6 +597,92 @@ def plot_decision_time_complexity_contour(db, model=None, scaler=None):
     plt.tight_layout(rect=[0, 0.05, 1, 1])
     plt.show()
 
+
+def plot_probability_by_complexity(db):
+    import sqlite3
+    import pandas as pd
+    import matplotlib.pyplot as plt
+    import json
+    import numpy as np
+    import ast
+
+    conn = sqlite3.connect(db.db)
+    query = "SELECT timestamp, probabilities, features FROM ml_predictions ORDER BY timestamp"
+    df = pd.read_sql_query(query, conn)
+    conn.close()
+    if df.empty:
+        print("Нет данных в ml_predictions.")
+        return
+
+    df['timestamp'] = pd.to_datetime(df['timestamp'])
+    df['time_hours'] = df['timestamp'].dt.hour + df['timestamp'].dt.minute / 60.0
+    df = df[(df['time_hours'] >= 9) & (df['time_hours'] <= 19)]
+
+    def get_complexity(features_val):
+        # Пытаемся распарсить features
+        try:
+            if isinstance(features_val, str):
+                # Сначала пробуем JSON
+                data = json.loads(features_val)
+                # Если получился словарь
+                if isinstance(data, dict):
+                    return int(data.get('task_complexity', 1))
+                # Если получился список (например, из 10 чисел)
+                elif isinstance(data, list) and len(data) >= 10:
+                    # последние 3 элемента – one‑hot сложности
+                    onehot = data[-3:]
+                    # ищем индекс максимального (предполагаем, что это 1)
+                    if max(onehot) > 0:
+                        return onehot.index(max(onehot))
+                    else:
+                        return 1
+            elif isinstance(features_val, (list, tuple)) and len(features_val) >= 10:
+                onehot = features_val[-3:]
+                if max(onehot) > 0:
+                    return onehot.index(max(onehot))
+                else:
+                    return 1
+        except:
+            pass
+        return 1  # по умолчанию средняя
+
+    def get_prob2(probs_str):
+        try:
+            if isinstance(probs_str, str):
+                probs = json.loads(probs_str)
+            else:
+                probs = probs_str
+            if isinstance(probs, list) and len(probs) >= 3:
+                return float(probs[0]) # не устал
+        except:
+            pass
+        return 0.0
+
+    df['task_complexity'] = df['features'].apply(get_complexity)
+    df['prob_class2'] = df['probabilities'].apply(get_prob2)
+
+    bin_width = 20 / 60.0
+    bins = np.arange(9, 19 + bin_width, bin_width)
+    df['time_bin'] = pd.cut(df['time_hours'], bins=bins, right=False)
+    grouped = df.groupby(['time_bin', 'task_complexity'], observed=False)['prob_class2'].mean().reset_index()
+    grouped['bin_center'] = grouped['time_bin'].apply(lambda x: (x.left + x.right)/2)
+
+    plt.figure(10,figsize=(10,6))
+    colors = {0: 'green', 1: 'orange', 2: 'red'}
+    labels = {0: 'Лёгкая', 1: 'Средняя', 2: 'Сложная'}
+    for comp in [0,1,2]:
+        data = grouped[grouped['task_complexity'] == comp]
+        if not data.empty:
+            plt.plot(data['bin_center'], data['prob_class2'], color=colors[comp], lw=2, label=labels[comp])
+    plt.xlabel('Время суток (часы)')
+    plt.ylabel('Средняя вероятность не уставшего состояния')
+    plt.title('Влияние сложности задачи на предсказание модели')
+    plt.legend()
+    plt.grid(True)
+    plt.xlim(9, 19)
+    plt.ylim(0, 1)
+    plt.show()
+
 def main():
     db = Database()
     """
@@ -618,9 +704,9 @@ def main():
     #plot_hourly_avg_probability(timestamps, y_prob)
 
     # График 3: работоспособность (fatigue trend)
-    #plot_fatigue_trend(db)
+    plot_fatigue_trend(db)
     # График 4: динамика частоты адаптаций
-    #plot_adaptation_levels_over_time(db)
+    plot_adaptation_levels_over_time(db)
 
     # ------------------------------------------------------------------
     # Закомментированные графики (матрица ошибок, граница решения)
@@ -636,6 +722,8 @@ def main():
     """
     # 5. График 3: граница решения для двух признаков (hour_sin, hours_since_start)
     #plot_fatigue_concentration_decision(db)
+
+    plot_probability_by_complexity(db)
 
     
     # ---- НОВОЕ: проверка модели на исторических данных ----

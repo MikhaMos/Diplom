@@ -365,10 +365,10 @@ class MainWindow(QMainWindow):
     def get_current_survey_interval_minutes(self):
         """Обновление интервала опроса на основе количества данных"""
         count = self.db.get_survey_count()
-        if count<1440:
+        if count<750:
             self.ui.interval_survey.setText(f"Интервал опроса: 30 минут")
             return 30 # 30 минут
-        elif count<=2880:
+        elif count<=1500:
             self.ui.interval_survey.setText(f"Интервал опроса: 60 минут")
             return 60 # 1 час
         else:
@@ -542,7 +542,7 @@ class MainWindow(QMainWindow):
         self.log_message("full adaptive mode enabled")
         self.ui.Label_adaptive_mode.setText(f" Адаптивный режим ВКЛ")
 
-        self.adaptation.apply_adaptive_style(self.ui)
+        self.adaptation.apply_adaptive_style(self.ui, instant=True)
         #Отправляем команду адаптацию робота
         if hasattr(self, 'robot_client') and self.robot_client.running:
             self.robot_client.send_command('set_adaptive_mode',enabled=True)
