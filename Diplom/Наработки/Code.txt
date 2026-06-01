@@ -1358,13 +1358,13 @@ def generate_survey_data(start_date, num_weeks):
 
     # Точки до обеда (включительно) и после обеда (исключая точку обеда, чтобы не дублировать)
     t_before = t_eval[t_eval <= lunch_time]
-    t_after = t_eval[t_eval > lunch_end]
+    t_after = t_eval[t_eval >= lunch_end]
 
 
     # Коэффициенты восстановления после обеда
-    recovery_W = 1.4   # работоспособность увеличивается на 25%
-    recovery_F = 0.6   # утомляемость снижается на 25%
-    recovery_E = 0.6   # ошибаемость снижается на 25%
+    recovery_W = 1.5   # работоспособность увеличивается на 50%
+    recovery_F = 0.5   # утомляемость снижается на 50%
+    recovery_E = 0.5   # ошибаемость снижается на 50%
 
     
     for week in range(num_weeks):
@@ -1567,7 +1567,6 @@ if __name__ == "__main__":
     start = datetime(2026, 3, 2)   # 1 апреля 2026
     generate_survey_data(start, num_weeks=8)
     plot_survey_data('survey_response.csv')
-
 Gui_ui.py:
 # -*- coding: utf-8 -*-
 
@@ -3731,9 +3730,9 @@ class MLServer:
                     X.append(self.model.extract_features(timestamp,task_complexity))
                     
                     # Трёхклассовая цель
-                    if fatigue_level >= 7 and concentration_level <= 4:
+                    if fatigue_level >= 7 and concentration_level <= 3:
                         target = 2
-                    elif 5 <= fatigue_level <= 7 and 4 <= concentration_level <= 7:
+                    elif 5 <= fatigue_level <= 7 and 3 <= concentration_level <= 8:
                         target = 1
                     else:
                         target = 0

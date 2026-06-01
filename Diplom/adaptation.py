@@ -261,7 +261,7 @@ class AdaptationManager:
             target_state = self.target_state
             self._stop_animation()
             self._apply_final_style(ui, target_state)
-            logger.info(f"Animation finished to {self.target_state}")
+            logger.info(f"Animation finished to {target_state}")
 
     def _apply_final_style(self, ui, target_state):
         main_window = ui.window() if ui else None
