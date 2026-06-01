@@ -538,11 +538,13 @@ class MainWindow(QMainWindow):
     def enable_full_adaptive_mode(self):
         if self.adaptation_level == 2:
             return
+        if self.adaptation_level == 0:
+            self.adaptation.apply_adaptive_style(self.ui, instant=False)
+
         self.adaptation_level = 2
         self.log_message("full adaptive mode enabled")
         self.ui.Label_adaptive_mode.setText(f" Адаптивный режим ВКЛ")
 
-        self.adaptation.apply_adaptive_style(self.ui, instant=True)
         #Отправляем команду адаптацию робота
         if hasattr(self, 'robot_client') and self.robot_client.running:
             self.robot_client.send_command('set_adaptive_mode',enabled=True)
@@ -550,11 +552,17 @@ class MainWindow(QMainWindow):
     def enable_interface_adaptive_mode(self):
         if self.adaptation_level == 1:
             return
+        if self.adaptation_level == 2:
+            self.adaptation_level = 1
+            if hasattr(self, 'robot_client') and self.robot_client.running:
+                self.robot_client.send_command('set_adaptive_mode', enabled=False)
+        if self.adaptation_level == 0:
+            self.adaptation.apply_adaptive_style(self.ui, instant=False)
+
         self.adaptation_level = 1
         self.log_message("interface adaptive mode enabled")
         self.ui.Label_adaptive_mode.setText(f" Адаптивный режим ВКЛ")
 
-        self.adaptation.apply_adaptive_style(self.ui)
         #Отправляем команду роботу
         if hasattr(self, 'robot_client') and self.robot_client.running:
             self.robot_client.send_command('set_adaptive_mode', enabled=False)
@@ -565,7 +573,7 @@ class MainWindow(QMainWindow):
         self.adaptation_level = 0
         self.log_message("Adaptive mode disabled")
         self.ui.Label_adaptive_mode.setText(f" Адаптивный режим ВЫКЛ")
-        self.adaptation.apply_normal_style(self.ui)
+        self.adaptation.apply_normal_style(self.ui, instant=False)
         #Отправляем команду на возврат к обычному режиму робота
         if hasattr(self, 'robot_client') and self.robot_client.running:
             self.robot_client.send_command('set_adaptive_mode', enabled=False)

@@ -85,13 +85,13 @@ def generate_survey_data(start_date, num_weeks):
 
     # Точки до обеда (включительно) и после обеда (исключая точку обеда, чтобы не дублировать)
     t_before = t_eval[t_eval <= lunch_time]
-    t_after = t_eval[t_eval > lunch_end]
+    t_after = t_eval[t_eval >= lunch_end]
 
 
     # Коэффициенты восстановления после обеда
-    recovery_W = 1.4   # работоспособность увеличивается на 25%
-    recovery_F = 0.6   # утомляемость снижается на 25%
-    recovery_E = 0.6   # ошибаемость снижается на 25%
+    recovery_W = 1.5   # работоспособность увеличивается на 50%
+    recovery_F = 0.5   # утомляемость снижается на 50%
+    recovery_E = 0.5   # ошибаемость снижается на 50%
 
     
     for week in range(num_weeks):

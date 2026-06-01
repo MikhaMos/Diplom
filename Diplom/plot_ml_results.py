@@ -317,9 +317,9 @@ def prepare_multiclass_data(db, limit=10000):
         dt = datetime.fromisoformat(ts_str)
         features = predictor.extract_features(dt, complexity)  # теперь с параметром сложности
         # Целевая метка (по правилам, использованным при обучении)
-        if fatigue >= 7 and concentration <= 4:
+        if fatigue >= 7 and concentration <= 3:
             target = 2
-        elif 5 <= fatigue <= 7 and 4 <= concentration <= 7:
+        elif 5 <= fatigue <= 7 and 3 <= concentration <= 8:
             target = 1
         else:
             target = 0
@@ -721,7 +721,7 @@ def main():
     plt.title('Матрица ошибок')
     """
     # 5. График 3: граница решения для двух признаков (hour_sin, hours_since_start)
-    #plot_fatigue_concentration_decision(db)
+    plot_fatigue_concentration_decision(db)
 
     plot_probability_by_complexity(db)
 
