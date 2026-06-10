@@ -6,4 +6,4 @@
 
 <img width="1794" height="874" alt="Общий" src="https://github.com/user-attachments/assets/cba5fbe1-e857-4b48-af42-4ad65ec32924" />
 
-[Презентация.pdf](https://github.com/user-attachments/files/28813248/default.pdf)
+
