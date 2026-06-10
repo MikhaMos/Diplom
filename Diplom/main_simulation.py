@@ -45,8 +45,8 @@ class KukaRobot:
                 'outer':2.2
             },
             'restricted': {
-                'inner':1.6, # 3 человек
-                'outer':4.4
+                'inner':1.8, # 3 человек
+                'outer':3.4
             }
         }
         self.current_ssm_mode = 'normal'
@@ -98,17 +98,17 @@ class KukaRobot:
         p.loadURDF("tray/traybox.urdf", [2.4, 0, 0.4], globalScaling=0.6)
 
         """Рабочее место 2 угол 90°"""
-        p.loadURDF("table_square/table_square.urdf", [0, 1.5, 0], globalScaling=0.75)
-        robot2 = p.loadURDF("kuka_iiwa/model.urdf", [0, 1.5, 0.45], useFixedBase=True)
+        self.human_id = p.loadURDF("humanoid/humanoid.urdf", [0, 1.5, 0.73],p.getQuaternionFromEuler([1.5,0,0]), useFixedBase=True, globalScaling=0.2)
         # Операционный стол (смещение по X=-0.9)
-        table2 = p.loadURDF("table/table.urdf", [0.9, 1.8, 0], globalScaling=0.8)
+        table2 = p.loadURDF("table/table.urdf", [0.9, 1.8, 0], p.getQuaternionFromEuler([0,0,1.55]), globalScaling=1)
         # Лоток (внешний круг, R=2.8, по X=0)
         p.loadURDF("table_square/table_square.urdf", [0, 2.4, 0], globalScaling=0.6)
         tray2 = p.loadURDF("tray/traybox.urdf", [0, 2.4, 0.4], globalScaling=0.6)
 
         """Рабочее место  3 угол 180°"""
         # Робот (средний круг, R=1.8)
-        self.human_id = p.loadURDF("humanoid/humanoid.urdf", [-1.8, 0, 0.73],p.getQuaternionFromEuler([1.5,0,1.5]), useFixedBase=True, globalScaling=0.2)
+        p.loadURDF("table_square/table_square.urdf", [-1.8, 0, 0], globalScaling=0.75)
+        robot2 = p.loadURDF("kuka_iiwa/model.urdf", [-1.8, 0, 0.45], useFixedBase=True)
         # Операционный стол (смещение по Y=+0.9)
         table3 = p.loadURDF("table/table.urdf", [-1.8, 0.9, 0], globalScaling=0.8)
         # Лоток (внешний круг, R=2.8)

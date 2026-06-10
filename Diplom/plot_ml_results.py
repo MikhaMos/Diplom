@@ -366,27 +366,36 @@ def evaluate_multiclass_model(X, y, model=None, test_size=0.3, random_state=42):
     disp.plot(cmap=plt.cm.Blues)
     plt.title('Confusion Matrix')
     
+    from sklearn.metrics import RocCurveDisplay
 
-    # ROC-кривые (One-vs-Rest)
-    plt.figure(11)
-    fpr, tpr, roc_auc = {}, {}, {}
-    for i in range(3):
-        fpr[i], tpr[i], _ = roc_curve(y_test == i, y_proba[:, i])
-        roc_auc[i] = auc(fpr[i], tpr[i])
+    # Бинарная истина: 1 – устал (класс 1 или 2), 0 – не устал (класс 0)
+    y_true_binary = (y_test > 0).astype(int)
 
-    colors = ['blue', 'green', 'red']
-    for i in range(3):
-        plt.plot(fpr[i], tpr[i], color=colors[i], lw=2,
-                 label=f'{target_names[i]} (AUC = {roc_auc[i]:.2f})')
-    plt.plot([0, 1], [0, 1], 'k--', lw=1)
-    plt.xlim([0.0, 1.0])
-    plt.ylim([0.0, 1.05])
-    plt.xlabel('False Positive Rate')
-    plt.ylabel('True Positive Rate')
-    plt.title('ROC curves (One-vs-Rest)')
-    plt.legend(loc='lower right')
-    plt.grid(True)
+    # Оценка (score): вероятность усталости = 1 - вероятность класса 0
+    # (или сумма вероятностей классов 1 и 2)
+    y_score = 1 - y_proba[:, 0]   # эквивалентно y_proba[:,1] + y_proba[:,2]
+
+    # Построение ROC-кривой
+    display = RocCurveDisplay.from_predictions(
+        y_true_binary,
+        y_score,
+        name="Устал (1+2) vs Не устал (0)",
+        curve_kwargs=dict(color="darkorange", lw=2),
+        plot_chance_level=True,
+        despine=True,
+    )
+    _ = display.ax_.set(
+        xlabel="False Positive Rate",
+        ylabel="True Positive Rate",
+        title="ROC-кривая: обнаружение усталости (классы 1 и 2)",
+    )
+    plt.grid(True, alpha=0.3)
     plt.show()
+
+    # Вывод AUC
+    from sklearn.metrics import roc_auc_score
+    auc_value = roc_auc_score(y_true_binary, y_score)
+    print(f"AUC = {auc_value:.3f}")
 
     return model, scaler
 
@@ -704,9 +713,9 @@ def main():
     #plot_hourly_avg_probability(timestamps, y_prob)
 
     # График 3: работоспособность (fatigue trend)
-    plot_fatigue_trend(db)
+    #plot_fatigue_trend(db)
     # График 4: динамика частоты адаптаций
-    plot_adaptation_levels_over_time(db)
+    #plot_adaptation_levels_over_time(db)
 
     # ------------------------------------------------------------------
     # Закомментированные графики (матрица ошибок, граница решения)
@@ -721,9 +730,9 @@ def main():
     plt.title('Матрица ошибок')
     """
     # 5. График 3: граница решения для двух признаков (hour_sin, hours_since_start)
-    plot_fatigue_concentration_decision(db)
+    #plot_fatigue_concentration_decision(db)
 
-    plot_probability_by_complexity(db)
+    #plot_probability_by_complexity(db)
 
     
     # ---- НОВОЕ: проверка модели на исторических данных ----
