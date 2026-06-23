@@ -143,7 +143,7 @@ python time_master.py
 
 ## 🎮 Демонстрация работы
 
-<img src="docs/Demonstration.gif" alt="Демонстрация работы системы" width="960">
+<img src="docs/Demonstration.gif" alt="Демонстрация работы системы" width="960" />
 
 ---
 
