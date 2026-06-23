@@ -143,7 +143,7 @@ python time_master.py
 
 ## 🎮 Демонстрация работы
 
-- [Демонстрация работы](docs/VideoDemonstration.mp4)
+![Демонстрация работы](docs/Demonstration.gif)
 
 ---
 
