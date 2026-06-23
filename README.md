@@ -173,7 +173,7 @@ python time_master.py
 ## 🔗 Ссылки
 
 - [GitHub репозиторий](https://github.com/MikhaMos/Diplom)
-- [Презентация](docs/Presentation.pdf)
+- [Презентация](docs/presentation.pdf)
 - [Текст ВКР](docs/Diplom.pdf)
 
 
