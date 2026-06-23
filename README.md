@@ -111,7 +111,7 @@
 ---
 
 ## 📂 Структура проекта
-'''
+```
 Diplom/
 ├── src/
 │   ├── main_app/                # Главное приложение (PySide6)
@@ -132,18 +132,18 @@ Diplom/
 │   ├── plot_ml_results.py       # Графики 
 │   └── generate_data.py         # Генерация опросов на основе мат.модели
 
-'''
+```
 ---
 
 ## 🚀 Запуск проекта
-'''
+```
 cd Diplom/
 
 python server__ML.py
 python server_pybuller.py
 python main_app.py
 python time_master.py
-'''
+```
 ---
 
 ## 🎮 Демонстрация работы
