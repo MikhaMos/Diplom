@@ -142,12 +142,6 @@ python time_master.py
 ```
 ---
 
-## 🎮 Демонстрация работы
-
-<img src="https://github.com/MikhaMos/Diplom/docs/Demonstration.gif" alt="Демонстрация работы системы" width="960" />
-
----
-
 ## 📄 Лицензия
 
 > **© 2026 Москальцов Михаил Александрович. Все права защищены.**
@@ -175,6 +169,6 @@ python time_master.py
 - [GitHub репозиторий](https://github.com/MikhaMos/Diplom)
 - [Презентация](docs/presentation.pdf)
 - [Текст ВКР](docs/Diplom.pdf)
-- [Демонстрация работы](docs/VideoDemonstration.mp4)
+- [Демонстрация работы](docs/Demonstration.gif)
 
 ---
