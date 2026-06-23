@@ -46,11 +46,6 @@
 
 <img width="765" height="464" alt="C4_container_system" src="https://github.com/user-attachments/assets/64ef119c-dc65-4fb6-a39c-9ae34483caa5" />
 
-
-### Общая схема системы
-
-<img width="1794" height="874" alt="Общий" src="https://github.com/user-attachments/assets/cba5fbe1-e857-4b48-af42-4ad65ec32924" />
-
 ---
 
 ## 📐 Математическая модель
