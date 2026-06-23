@@ -143,7 +143,7 @@ python time_master.py
 
 ## 🎮 Демонстрация работы
 
-<img width="1280" height="720" alt="Предзащита" src="https://github.com/user-attachments/assets/229d4623-fda5-43d3-bec4-dfeb1718b4b4" />
+- [Демонстрация работы](docs/VideoDemonstration.mp4)
 
 ---
 
