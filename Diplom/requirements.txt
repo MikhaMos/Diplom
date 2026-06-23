@@ -1,0 +1,13 @@
+# Основные зависимости
+PySide6==6.8.2.1               # GUI (Qt для Python)
+pybullet==3.2.6                 # Физический движок для симуляции
+scikit-learn==1.6.1             # Машинное обучение (логистическая регрессия)
+numpy==2.2.3                    # Работа с массивами и матрицами
+pandas==2.2.3                   # Работа с данными (генерация CSV)
+scipy==1.15.2                   # Численное интегрирование (solve_ivp)
+websockets==14.2                # WebSocket сервер и клиент
+matplotlib==3.10.1              # Визуализация (графики для generate_data.py)
+
+# Для PyBullet требуются дополнительные библиотеки (устанавливаются отдельно):
+# - Для Linux: libgl1-mesa-glx, libegl1-mesa-dev
+# - Для Windows: Visual C++ Redistributable
